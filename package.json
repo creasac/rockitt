@@ -1,0 +1,33 @@
+{
+  "name": "rockitt",
+  "version": "0.1.0",
+  "description": "Voice-first Chrome side panel for grounded web answers.",
+  "private": true,
+  "scripts": {
+    "dev": "wxt",
+    "build": "wxt build",
+    "zip": "wxt zip",
+    "postinstall": "wxt prepare"
+  },
+  "keywords": [
+    "chrome-extension",
+    "voice",
+    "search"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "dependencies": {
+    "@fontsource/ibm-plex-mono": "^5.2.7",
+    "@fontsource/space-grotesk": "^5.2.10",
+    "lucide-react": "^1.6.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^6.0.1",
+    "typescript": "^6.0.2",
+    "wxt": "^0.20.20"
+  }
+}
