@@ -7,7 +7,11 @@ export default defineConfig({
   manifest: {
     name: 'rockitt',
     description: 'Voice-first web answers from a side panel.',
-    permissions: ['sidePanel'],
+    permissions: ['sidePanel', 'storage'],
+    host_permissions: [
+      'https://api.elevenlabs.io/*',
+      'https://api.firecrawl.dev/*',
+    ],
     icons: {
       16: 'rockitt.png',
       32: 'rockitt.png',
