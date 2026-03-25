@@ -89,6 +89,7 @@ button {
 .panel__toolbar {
   display: flex;
   justify-content: flex-end;
+  gap: 0.45rem;
   padding: 0 0.15rem 0.45rem;
 }
 
@@ -174,6 +175,12 @@ button {
   border: none;
   background: transparent;
   padding: 0;
+  transition: opacity 160ms ease;
+}
+
+.voice-orb:disabled {
+  cursor: wait;
+  opacity: 0.72;
 }
 
 .voice-orb__halo,
@@ -261,12 +268,47 @@ button {
   text-align: center;
 }
 
+.voice-view__actions {
+  display: flex;
+  justify-content: center;
+  width: 100%;
+}
+
 .voice-view__hint {
   max-width: 18rem;
   margin: 0;
   color: var(--muted);
   font-size: 0.94rem;
   letter-spacing: -0.02em;
+}
+
+.voice-view__meta {
+  margin: 0;
+  color: var(--muted-soft);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.7rem;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.inline-banner {
+  max-width: 18rem;
+  padding: 0.75rem 0.85rem;
+  border-radius: 1rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.inline-banner--notice {
+  border: 1px solid rgba(29, 155, 105, 0.16);
+  background: rgba(29, 155, 105, 0.08);
+  color: #1d7b58;
+}
+
+.inline-banner--error {
+  border: 1px solid rgba(201, 84, 84, 0.16);
+  background: rgba(201, 84, 84, 0.08);
+  color: #9b4242;
 }
 
 .text-toggle {
@@ -334,6 +376,10 @@ button {
   color: white;
 }
 
+.message--pending {
+  opacity: 0.9;
+}
+
 .message__text {
   margin: 0;
   font-size: 0.95rem;
@@ -341,12 +387,42 @@ button {
 }
 
 .message__meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   color: inherit;
   opacity: 0.72;
   font-family: 'IBM Plex Mono', monospace;
   font-size: 0.68rem;
   letter-spacing: 0.08em;
   text-transform: uppercase;
+}
+
+.chat-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 1rem 1.05rem;
+  border: 1px dashed rgba(17, 19, 24, 0.12);
+  border-radius: 1.2rem;
+  background: rgba(255, 255, 255, 0.58);
+}
+
+.chat-empty__title,
+.chat-empty__copy {
+  margin: 0;
+}
+
+.chat-empty__title {
+  font-size: 0.92rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.chat-empty__copy {
+  color: var(--muted);
+  font-size: 0.82rem;
+  line-height: 1.5;
 }
 
 .composer {
@@ -402,6 +478,12 @@ button {
   background: var(--accent);
   color: white;
   box-shadow: 0 10px 24px rgba(20, 99, 255, 0.24);
+}
+
+.composer__input:disabled,
+.composer__send:disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
 }
 
 .scrim {

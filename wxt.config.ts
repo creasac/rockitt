@@ -6,11 +6,17 @@ export default defineConfig({
   extensionApi: 'chrome',
   manifest: {
     name: 'rockitt',
+    content_security_policy: {
+      extension_pages:
+        "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' https://api.elevenlabs.io https://api.firecrawl.dev https://livekit.rtc.elevenlabs.io https://*.livekit.rtc.elevenlabs.io wss://api.elevenlabs.io wss://livekit.rtc.elevenlabs.io wss://*.livekit.rtc.elevenlabs.io;",
+    },
     description: 'Voice-first web answers from a side panel.',
     permissions: ['sidePanel', 'storage'],
     host_permissions: [
       'https://api.elevenlabs.io/*',
       'https://api.firecrawl.dev/*',
+      'https://livekit.rtc.elevenlabs.io/*',
+      'https://*.livekit.rtc.elevenlabs.io/*',
     ],
     icons: {
       16: 'rockitt.png',

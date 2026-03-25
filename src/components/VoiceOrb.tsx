@@ -3,6 +3,8 @@ import { Mic, Sparkles } from 'lucide-react';
 import type { VoiceState } from '../lib/mock-data';
 
 type VoiceOrbProps = {
+  disabled?: boolean;
+  label?: string;
   state: VoiceState;
   onPress: () => void;
 };
@@ -14,13 +16,19 @@ const iconByState = {
   speaking: Sparkles,
 } satisfies Record<VoiceState, typeof Mic>;
 
-export function VoiceOrb({ state, onPress }: VoiceOrbProps) {
+export function VoiceOrb({
+  disabled = false,
+  label = 'Start or preview voice mode',
+  state,
+  onPress,
+}: VoiceOrbProps) {
   const Icon = iconByState[state];
 
   return (
     <button
-      aria-label="Start or preview voice mode"
+      aria-label={label}
       className={`voice-orb voice-orb--${state}`}
+      disabled={disabled}
       type="button"
       onClick={onPress}
     >
