@@ -5,7 +5,7 @@ export default defineConfig({
   srcDir: 'src',
   extensionApi: 'chrome',
   manifest: {
-    name: 'Rockitt',
+    name: 'rockitt',
     description: 'Voice-first web answers from a side panel.',
     permissions: ['sidePanel'],
     icons: {
@@ -15,7 +15,7 @@ export default defineConfig({
       128: 'rockitt.png',
     },
     action: {
-      default_title: 'Open Rockitt',
+      default_title: 'Open rockitt',
       default_icon: {
         16: 'rockitt.png',
         32: 'rockitt.png',

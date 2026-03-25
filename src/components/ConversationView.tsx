@@ -4,11 +4,25 @@ import type { ChatMessage } from '../lib/mock-data';
 
 type ConversationViewProps = {
   messages: ChatMessage[];
+  onBackToVoice: () => void;
 };
 
-export function ConversationView({ messages }: ConversationViewProps) {
+export function ConversationView({
+  messages,
+  onBackToVoice,
+}: ConversationViewProps) {
   return (
     <div className="chat-shell">
+      <div className="chat-shell__top">
+        <button
+          className="text-toggle text-toggle--chat"
+          type="button"
+          onClick={onBackToVoice}
+        >
+          Back to voice
+        </button>
+      </div>
+
       <div className="chat-feed">
         {messages.map((message) => (
           <article
