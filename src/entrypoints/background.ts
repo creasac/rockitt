@@ -1,14 +1,18 @@
 import {
   createEmptyProviderState,
+  isEncryptedProviderSecret,
   providerCatalog,
   storageKeys,
   toProviderState,
   type BackgroundMessage,
   type BackgroundResponse,
+  type ProviderSecretSnapshot,
   type ProviderId,
   type StoredProviderMetadata,
+  type StoredProviderSecret,
   type StoredProviderSecrets,
 } from '../lib/provider-settings';
+import { decryptSecret, encryptSecret } from '../lib/secure-storage';
 
 const enableActionOpen = async () => {
   try {
@@ -38,17 +42,82 @@ const loadProviderData = async () => {
     storageKeys.metadata,
   ]);
 
+  const secrets =
+    (stored[storageKeys.secrets] as StoredProviderSecrets | undefined) ?? {};
+  const metadata =
+    (stored[storageKeys.metadata] as StoredProviderMetadata | undefined) ?? {};
+
+  const migratedSecrets = await migrateLegacySecrets(secrets, metadata);
+
   return {
-    secrets:
-      (stored[storageKeys.secrets] as StoredProviderSecrets | undefined) ?? {},
-    metadata:
-      (stored[storageKeys.metadata] as StoredProviderMetadata | undefined) ?? {},
+    secrets: migratedSecrets,
+    metadata,
   };
+};
+
+const decryptStoredProviderSecret = async (storedSecret: StoredProviderSecret) => {
+  if (!isEncryptedProviderSecret(storedSecret)) {
+    return storedSecret.apiKey;
+  }
+
+  return decryptSecret(storedSecret.encrypted);
+};
+
+const getDecryptedProviderSecrets = async (secrets: StoredProviderSecrets) => {
+  const decryptedSecrets: Partial<Record<ProviderId, ProviderSecretSnapshot>> =
+    {};
+
+  await Promise.all(
+    (Object.keys(secrets) as ProviderId[]).map(async (provider) => {
+      const storedSecret = secrets[provider];
+
+      if (!storedSecret) {
+        return;
+      }
+
+      decryptedSecrets[provider] = {
+        apiKey: await decryptStoredProviderSecret(storedSecret),
+        updatedAt: storedSecret.updatedAt,
+      };
+    }),
+  );
+
+  return decryptedSecrets;
+};
+
+const migrateLegacySecrets = async (
+  secrets: StoredProviderSecrets,
+  metadata: StoredProviderMetadata,
+) => {
+  let didMigrate = false;
+  const nextSecrets: StoredProviderSecrets = { ...secrets };
+
+  await Promise.all(
+    (Object.keys(secrets) as ProviderId[]).map(async (provider) => {
+      const storedSecret = secrets[provider];
+
+      if (!storedSecret || isEncryptedProviderSecret(storedSecret)) {
+        return;
+      }
+
+      nextSecrets[provider] = {
+        encrypted: await encryptSecret(storedSecret.apiKey),
+        updatedAt: storedSecret.updatedAt,
+      };
+      didMigrate = true;
+    }),
+  );
+
+  if (didMigrate) {
+    await persistProviderData(nextSecrets, metadata);
+  }
+
+  return nextSecrets;
 };
 
 const getPublicProviderState = async () => {
   const { secrets, metadata } = await loadProviderData();
-  return toProviderState(secrets, metadata);
+  return toProviderState(await getDecryptedProviderSecrets(secrets), metadata);
 };
 
 const persistProviderData = async (
@@ -75,7 +144,7 @@ const saveProviderKey = async (provider: ProviderId, apiKey: string) => {
     {
       ...secrets,
       [provider]: {
-        apiKey: trimmedKey,
+        encrypted: await encryptSecret(trimmedKey),
         updatedAt: now,
       },
     },
@@ -115,16 +184,19 @@ const updateProviderMetadata = async (
   nextMeta: StoredProviderMetadata[ProviderId],
 ) => {
   const { secrets, metadata } = await loadProviderData();
+  const nextMetadata = {
+    ...metadata,
+    [provider]: nextMeta,
+  };
 
   await persistProviderData(secrets, {
-    ...metadata,
-    [provider]: nextMeta,
+    ...nextMetadata,
   });
 
-  return toProviderState(secrets, {
-    ...metadata,
-    [provider]: nextMeta,
-  });
+  return toProviderState(
+    await getDecryptedProviderSecrets(secrets),
+    nextMetadata,
+  );
 };
 
 const readResponseMessage = async (response: Response) => {
@@ -179,11 +251,13 @@ const testProviderKey = async (provider: ProviderId) => {
     throw new Error(`No ${providerCatalog[provider].label} key is stored.`);
   }
 
+  const apiKey = await decryptStoredProviderSecret(storedSecret);
+
   try {
     if (provider === 'firecrawl') {
-      await verifyFirecrawlKey(storedSecret.apiKey);
+      await verifyFirecrawlKey(apiKey);
     } else {
-      await verifyElevenLabsKey(storedSecret.apiKey);
+      await verifyElevenLabsKey(apiKey);
     }
 
     return updateProviderMetadata(provider, {

@@ -79,8 +79,9 @@ export function SettingsSheet({
       </div>
 
       <p className="settings-sheet__intro">
-        Keys stay on this browser profile and are used from the extension
-        background worker. The panel only sees masked metadata after save.
+        Keys stay on this browser profile, are encrypted before being written to
+        local extension storage, and are used from the extension background
+        worker. The panel only sees masked metadata after save.
       </p>
 
       {requestNotice ? (

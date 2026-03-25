@@ -55,10 +55,26 @@ export type BackgroundResponse =
       state?: ProviderStatusMap;
     };
 
-type StoredProviderSecret = {
+export type EncryptedSecretPayload = {
+  version: 1;
+  algorithm: 'AES-GCM';
+  ciphertext: string;
+  iv: string;
+};
+
+export type ProviderSecretSnapshot = {
   apiKey: string;
   updatedAt: string;
 };
+
+export type StoredEncryptedProviderSecret = {
+  encrypted: EncryptedSecretPayload;
+  updatedAt: string;
+};
+
+export type StoredProviderSecret =
+  | ProviderSecretSnapshot
+  | StoredEncryptedProviderSecret;
 
 type StoredProviderMeta = {
   validationStatus: ProviderValidationStatus;
@@ -88,6 +104,10 @@ export const createEmptyProviderState = (): ProviderStatusMap => ({
   firecrawl: { ...defaultProviderStatus },
 });
 
+export const isEncryptedProviderSecret = (
+  secret: StoredProviderSecret,
+): secret is StoredEncryptedProviderSecret => 'encrypted' in secret;
+
 export const maskApiKey = (apiKey: string) => {
   const trimmedKey = apiKey.trim();
 
@@ -99,7 +119,7 @@ export const maskApiKey = (apiKey: string) => {
 };
 
 export const toProviderState = (
-  secrets: StoredProviderSecrets,
+  secrets: Partial<Record<ProviderId, ProviderSecretSnapshot>>,
   metadata: StoredProviderMetadata,
 ): ProviderStatusMap => {
   const baseState = createEmptyProviderState();
