@@ -1,16 +1,7 @@
-import {
-  CircleAlert,
-  LoaderCircle,
-  ShieldCheck,
-  X,
-} from 'lucide-react';
+import { X } from 'lucide-react';
 import type { ReactNode } from 'react';
 
-import {
-  serviceCatalog,
-  type ServiceId,
-  type ServiceStatusMap,
-} from '../lib/service-runtime';
+import { type ServiceId, type ServiceStatusMap } from '../lib/service-runtime';
 
 type SettingsDetail = {
   label: string;
@@ -18,7 +9,6 @@ type SettingsDetail = {
 };
 
 type SettingsSheetProps = {
-  activityPanel?: ReactNode;
   details: SettingsDetail[];
   onClose: () => void;
   requestError: string | null;
@@ -27,7 +17,13 @@ type SettingsSheetProps = {
   usageOverridePanel?: ReactNode;
 };
 
-const services = Object.keys(serviceCatalog) as ServiceId[];
+const services: ServiceId[] = ['elevenlabs', 'firecrawl'];
+
+const serviceLabelCopy: Record<ServiceId, string> = {
+  backend: 'Rockitt',
+  elevenlabs: 'Voice',
+  firecrawl: 'Live web',
+};
 
 const statusChipCopy = {
   checking: 'Checking',
@@ -36,28 +32,7 @@ const statusChipCopy = {
   unavailable: 'Unavailable',
 } as const;
 
-const statusTitleCopy = {
-  checking: 'Rockitt is checking this managed service.',
-  degraded: 'The service responded, but it is not fully ready.',
-  ready: 'Managed access is available.',
-  unavailable: 'Managed access is unavailable right now.',
-} as const;
-
-const formatTimestamp = (value: string | null) => {
-  if (!value) {
-    return null;
-  }
-
-  return new Intl.DateTimeFormat(undefined, {
-    day: 'numeric',
-    hour: 'numeric',
-    minute: '2-digit',
-    month: 'short',
-  }).format(new Date(value));
-};
-
 export function SettingsSheet({
-  activityPanel,
   details,
   onClose,
   requestError,
@@ -68,10 +43,7 @@ export function SettingsSheet({
   return (
     <aside aria-label="Settings" className="settings-sheet">
       <div className="settings-sheet__header">
-        <div>
-          <p className="eyebrow">Settings</p>
-          <h2 className="settings-sheet__title">Managed services</h2>
-        </div>
+        <h2 className="settings-sheet__title">Settings</h2>
 
         <button
           aria-label="Close settings"
@@ -82,11 +54,6 @@ export function SettingsSheet({
           <X size={16} strokeWidth={2} />
         </button>
       </div>
-
-      <p className="settings-sheet__intro">
-        Rockitt now uses app-managed provider credentials through your backend.
-        Users no longer need to paste provider secrets into the extension.
-      </p>
 
       {requestNotice ? (
         <div className="settings-banner settings-banner--notice" role="status">
@@ -100,20 +67,16 @@ export function SettingsSheet({
         </div>
       ) : null}
 
-      <div className="settings-list">
-        {services.map((service) => {
-          const meta = serviceCatalog[service];
-          const state = serviceState[service];
-          const checkedAtLabel = formatTimestamp(state.checkedAt);
+      <section className="settings-section">
+        <p className="settings-section__title">Services</p>
 
-          return (
-            <section key={service} className="provider-card">
-              <div className="provider-card__top">
-                <div>
-                  <p className="provider-card__label">{meta.label}</p>
-                  <p className="provider-card__description">{meta.description}</p>
-                </div>
+        <div className="settings-group">
+          {services.map((service) => {
+            const state = serviceState[service];
 
+            return (
+              <div key={service} className="settings-row">
+                <p className="settings-row__label">{serviceLabelCopy[service]}</p>
                 <span
                   className={`provider-chip ${
                     state.status === 'ready' ? 'provider-chip--ready' : ''
@@ -122,77 +85,25 @@ export function SettingsSheet({
                   {statusChipCopy[state.status]}
                 </span>
               </div>
-
-              <div
-                className={`provider-card__validation provider-card__validation--${
-                  state.status === 'ready' ? 'success' : 'error'
-                }`}
-              >
-                {state.status === 'checking' ? (
-                  <LoaderCircle className="spin" size={15} />
-                ) : state.status === 'ready' ? (
-                  <ShieldCheck size={15} />
-                ) : (
-                  <CircleAlert size={15} />
-                )}
-
-                <div>
-                  <p className="provider-card__validation-title">
-                    {statusTitleCopy[state.status]}
-                  </p>
-                  <p className="provider-card__validation-copy">
-                    {state.detail ?? state.summary}
-                    {checkedAtLabel ? ` Checked ${checkedAtLabel}.` : ''}
-                  </p>
-                </div>
-              </div>
-            </section>
-          );
-        })}
-      </div>
+            );
+          })}
+        </div>
+      </section>
 
       {usageOverridePanel}
 
       <section className="settings-section">
-        <div className="settings-section__header">
-          <div>
-            <p className="settings-section__title">Session details</p>
-            <p className="settings-section__copy">
-              Moved out of the main panel to keep the orb page clean.
-            </p>
-          </div>
-        </div>
+        <p className="settings-section__title">This browser</p>
 
-        <div className="settings-detail-grid">
+        <div className="settings-group">
           {details.map((detail) => (
-            <article key={detail.label} className="settings-detail">
-              <p className="settings-detail__label">{detail.label}</p>
-              <p className="settings-detail__value">{detail.value}</p>
-            </article>
+            <div key={detail.label} className="settings-row">
+              <p className="settings-row__label">{detail.label}</p>
+              <p className="settings-row__value">{detail.value}</p>
+            </div>
           ))}
         </div>
       </section>
-
-      {activityPanel ? (
-        <section className="settings-section">
-          <div className="settings-section__header">
-            <div>
-              <p className="settings-section__title">Tool activity</p>
-              <p className="settings-section__copy">
-                Recent tool calls and session events.
-              </p>
-            </div>
-          </div>
-
-          {activityPanel}
-        </section>
-      ) : null}
-
-      <p className="settings-sheet__footnote">
-        Keep provider secrets in Cloudflare Worker secrets, not in extension
-        storage. Local extension state should stay limited to UI state, the
-        temporary trial quota, transcripts, and device-level preferences.
-      </p>
     </aside>
   );
 }

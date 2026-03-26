@@ -1,4 +1,5 @@
 import { Send } from 'lucide-react';
+import { useEffect, useRef } from 'react';
 
 import { RockittPageToggle } from './RockittPageToggle';
 import { VoiceSessionControls } from './VoiceSessionControls';
@@ -29,6 +30,12 @@ type ConversationViewProps = {
   statusText: string;
 };
 
+const autoScrollThresholdPx = 24;
+
+const isNearBottom = (element: HTMLDivElement) =>
+  element.scrollHeight - element.scrollTop - element.clientHeight <=
+  autoScrollThresholdPx;
+
 export function ConversationView({
   canSend,
   draft,
@@ -46,9 +53,31 @@ export function ConversationView({
   onToggleMute,
   statusText,
 }: ConversationViewProps) {
+  const feedRef = useRef<HTMLDivElement | null>(null);
+  const shouldAutoScrollRef = useRef(true);
   const visibleMessages = messages.filter(
     (message) => message.role !== 'tool' || message.status === 'error',
   );
+
+  useEffect(() => {
+    const feed = feedRef.current;
+
+    if (!feed || !shouldAutoScrollRef.current) {
+      return;
+    }
+
+    feed.scrollTop = feed.scrollHeight;
+  }, [isAwaitingReply, visibleMessages]);
+
+  const handleFeedScroll = () => {
+    const feed = feedRef.current;
+
+    if (!feed) {
+      return;
+    }
+
+    shouldAutoScrollRef.current = isNearBottom(feed);
+  };
 
   return (
     <div className="chat-shell">
@@ -60,7 +89,11 @@ export function ConversationView({
         />
       </div>
 
-      <div className="chat-feed">
+      <div
+        ref={feedRef}
+        className="chat-feed"
+        onScroll={handleFeedScroll}
+      >
         {visibleMessages.map((message) => (
           <article
             key={message.id}

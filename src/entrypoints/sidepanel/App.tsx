@@ -1,12 +1,9 @@
 import { useConversation } from '@elevenlabs/react';
-import { CircleAlert, KeyRound, Settings2, ShieldCheck } from 'lucide-react';
+import { Settings2 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { ConversationView } from '../../components/ConversationView';
-import {
-  DebugActivityPanel,
-  type DebugActivity,
-} from '../../components/DebugActivityPanel';
+import { type DebugActivity } from '../../components/DebugActivityPanel';
 import { RockittPageToggle } from '../../components/RockittPageToggle';
 import { SettingsSheet } from '../../components/SettingsSheet';
 import { VoiceOrb } from '../../components/VoiceOrb';
@@ -156,24 +153,27 @@ const formatUsageResetAt = (value: string | null) =>
 const getUsageBlockedMessage = (usage: UsageState) =>
   `This temporary trial allows ${String(usage.limit)} user ${pluralize(usage.limit, 'message')} per rolling 24 hours. Try again after ${formatUsageResetAt(usage.resetsAt)}.`;
 
-const getUsageDetailCopy = (usage: UsageState) => {
+const getUsageSettingsStatus = (usage: UsageState) => {
   if (usage.isOverrideUnlocked) {
-    const unlockedAtLabel = formatUsageMoment(usage.overrideUnlockedAt);
-
-    return unlockedAtLabel
-      ? `Unlimited access enabled on this browser profile. Unlocked ${unlockedAtLabel}.`
-      : 'Unlimited access enabled on this browser profile.';
+    return 'Unlimited';
   }
 
-  if (!usage.allowed) {
-    return `Trial limit reached. ${String(usage.used)} of ${String(usage.limit)} used. Try again after ${formatUsageResetAt(usage.resetsAt)}.`;
-  }
+  return `${String(Math.max(usage.remaining, 0))} left`;
+};
 
-  if (usage.used === 0) {
-    return `${String(usage.limit)} trial messages available in a rolling 24-hour window.`;
+const getMicrophoneSettingsStatus = (state: MicrophonePermissionState) => {
+  switch (state) {
+    case 'granted':
+      return 'Allowed';
+    case 'denied':
+      return 'Blocked';
+    case 'prompt':
+      return 'Needs permission';
+    case 'unsupported':
+      return 'Unavailable';
+    default:
+      return 'Checking';
   }
-
-  return `${String(usage.remaining)} of ${String(usage.limit)} trial messages left in the current 24-hour window.`;
 };
 
 const getFirecrawlSearchQuery = (parameters: unknown) => {
@@ -744,13 +744,6 @@ export function App() {
       summary,
       title,
     });
-  };
-
-  const clearDebugActivities = () => {
-    setDebugActivities([]);
-    pendingClientToolIdsRef.current = {};
-    toolActivityIdsRef.current = {};
-    toolSourceRef.current = {};
   };
 
   const loadUsageState = async () => {
@@ -1873,66 +1866,23 @@ export function App() {
       : isStartingVoice || conversation.status === 'connecting'
         ? 'starting'
       : stateCopy.hint);
-  const voiceMeta = voiceRuntime.agent
-    ? `${voiceRuntime.agent.llm} / ${voiceRuntime.agent.voiceLabel} / aggressive cost profile`
-    : isManagedVoiceReady
-      ? 'Managed by the Rockitt backend.'
-      : serviceState.elevenlabs.detail ?? serviceState.elevenlabs.summary;
-  const backendMeta =
-    serviceState.backend.detail ?? serviceState.backend.summary;
-  const microphoneMeta = `Mic permission: ${microphoneState}`;
-  const liveWebMeta = isManagedLiveWebReady
-    ? 'Live web lookup ready via the Rockitt backend.'
-    : serviceState.firecrawl.detail ?? serviceState.firecrawl.summary;
-  const usageMeta = getUsageDetailCopy(usageState);
-  const pageContextMeta =
-    'Current-tab context is read locally only when the question is about the page.';
   const settingsDetails = [
     {
-      label: 'Backend',
-      value: backendMeta,
-    },
-    {
-      label: 'Voice agent',
-      value: voiceMeta,
-    },
-    {
       label: 'Microphone',
-      value: microphoneMeta,
+      value: getMicrophoneSettingsStatus(microphoneState),
     },
     {
-      label: 'Live web',
-      value: liveWebMeta,
-    },
-    {
-      label: 'Trial limit',
-      value: usageMeta,
-    },
-    {
-      label: 'Page context',
-      value: pageContextMeta,
+      label: 'Messages',
+      value: getUsageSettingsStatus(usageState),
     },
   ];
   const usageOverridePanel = (
     <section className="settings-section">
-      <div className="settings-section__header">
-        <div>
-          <p className="settings-section__title">Access override</p>
-          <p className="settings-section__copy">
-            Unlock unlimited local usage on this browser profile.
-          </p>
-        </div>
-      </div>
+      <p className="settings-section__title">Access</p>
 
-      <section className="provider-card">
-        <div className="provider-card__top">
-          <div>
-            <p className="provider-card__label">Unlimited access</p>
-            <p className="provider-card__description">
-              Stored locally only. This does not touch the backend.
-            </p>
-          </div>
-
+      <div className="settings-group">
+        <div className="settings-row">
+          <p className="settings-row__label">Unlimited access</p>
           <span
             className={`provider-chip${
               usageState.isOverrideUnlocked ? ' provider-chip--ready' : ''
@@ -1941,81 +1891,51 @@ export function App() {
             {usageState.isOverrideUnlocked ? 'Unlocked' : 'Locked'}
           </span>
         </div>
+      </div>
 
-        <div
-          className={`provider-card__validation provider-card__validation--${
-            usageState.isOverrideUnlocked ? 'success' : 'error'
-          }`}
-        >
-          {usageState.isOverrideUnlocked ? (
-            <ShieldCheck size={15} />
-          ) : (
-            <CircleAlert size={15} />
-          )}
-
-          <div>
-            <p className="provider-card__validation-title">
-              {usageState.isOverrideUnlocked
-                ? 'Unlimited local usage is enabled.'
-                : 'Enter the access code to bypass the temporary local limit.'}
-            </p>
-            <p className="provider-card__validation-copy">
-              {getUsageDetailCopy(usageState)}
-            </p>
-          </div>
+      {usageState.isOverrideUnlocked ? (
+        <div className="settings-actions">
+          <button
+            className="action-button action-button--ghost"
+            disabled={isClearingUsageOverride}
+            type="button"
+            onClick={() => {
+              void clearUsageOverride();
+            }}
+          >
+            {isClearingUsageOverride ? 'Removing' : 'Remove'}
+          </button>
         </div>
+      ) : (
+        <div className="settings-inline-form">
+          <input
+            aria-label="Access code"
+            autoCapitalize="off"
+            autoComplete="off"
+            autoCorrect="off"
+            className="settings-inline-form__input"
+            inputMode="text"
+            placeholder="Access code"
+            spellCheck={false}
+            type="password"
+            value={usageOverrideCode}
+            onChange={(event) => {
+              setUsageOverrideCode(event.target.value);
+            }}
+          />
 
-        {usageState.isOverrideUnlocked ? (
-          <div className="provider-card__actions">
-            <button
-              className="action-button action-button--danger"
-              disabled={isClearingUsageOverride}
-              type="button"
-              onClick={() => {
-                void clearUsageOverride();
-              }}
-            >
-              {isClearingUsageOverride ? 'Removing' : 'Remove override'}
-            </button>
-          </div>
-        ) : (
-          <>
-            <label className="provider-card__meta">
-              <span className="provider-card__input-label">Access code</span>
-              <span className="provider-card__input-wrap">
-                <KeyRound className="provider-card__input-icon" size={15} />
-                <input
-                  autoCapitalize="off"
-                  autoComplete="off"
-                  autoCorrect="off"
-                  className="provider-card__input"
-                  inputMode="text"
-                  placeholder="Enter access code"
-                  spellCheck={false}
-                  type="password"
-                  value={usageOverrideCode}
-                  onChange={(event) => {
-                    setUsageOverrideCode(event.target.value);
-                  }}
-                />
-              </span>
-            </label>
-
-            <div className="provider-card__actions">
-              <button
-                className="action-button"
-                disabled={!usageOverrideCode.trim() || isUnlockingUsageOverride}
-                type="button"
-                onClick={() => {
-                  void unlockUsageOverride();
-                }}
-              >
-                {isUnlockingUsageOverride ? 'Unlocking' : 'Unlock access'}
-              </button>
-            </div>
-          </>
-        )}
-      </section>
+          <button
+            className="action-button"
+            disabled={!usageOverrideCode.trim() || isUnlockingUsageOverride}
+            type="button"
+            onClick={() => {
+              void unlockUsageOverride();
+            }}
+          >
+            {isUnlockingUsageOverride ? 'Unlocking' : 'Unlock'}
+          </button>
+        </div>
+      )}
     </section>
   );
 
@@ -2147,12 +2067,6 @@ export function App() {
             />
 
             <SettingsSheet
-              activityPanel={
-                <DebugActivityPanel
-                  activities={debugActivities}
-                  onClear={clearDebugActivities}
-                />
-              }
               details={settingsDetails}
               requestError={requestError}
               requestNotice={requestNotice}
