@@ -15,6 +15,7 @@ import {
   sendFirecrawlMessage,
   sendPageContextMessage,
   sendServiceMessage,
+  sendUsageMessage,
   sendVoiceMessage,
 } from '../../lib/background-client';
 import {
@@ -45,6 +46,10 @@ import {
   createEmptyServiceState,
   type ServiceStatusMap,
 } from '../../lib/service-runtime';
+import {
+  createInitialUsageState,
+  type UsageState,
+} from '../../lib/usage-runtime';
 
 type LiveChatMessage = {
   eventId?: number;
@@ -128,6 +133,37 @@ const readStoredDebugActivities = (): DebugActivity[] => {
 
 const pluralize = (count: number, singular: string, plural = `${singular}s`) =>
   count === 1 ? singular : plural;
+
+const normalizeUserMessageForQuota = (value: string) =>
+  value.trim().replace(/\s+/g, ' ');
+
+const formatUsageResetAt = (value: string | null) => {
+  if (!value) {
+    return 'when the current 24-hour window resets';
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    month: 'short',
+  }).format(new Date(value));
+};
+
+const getUsageBlockedMessage = (usage: UsageState) =>
+  `This temporary trial allows ${String(usage.limit)} user ${pluralize(usage.limit, 'message')} per rolling 24 hours. Try again after ${formatUsageResetAt(usage.resetsAt)}.`;
+
+const getUsageDetailCopy = (usage: UsageState) => {
+  if (!usage.allowed) {
+    return `Trial limit reached. ${String(usage.used)} of ${String(usage.limit)} used. Try again after ${formatUsageResetAt(usage.resetsAt)}.`;
+  }
+
+  if (usage.used === 0) {
+    return `${String(usage.limit)} trial messages available in a rolling 24-hour window.`;
+  }
+
+  return `${String(usage.remaining)} of ${String(usage.limit)} trial messages left in the current 24-hour window.`;
+};
 
 const getFirecrawlSearchQuery = (parameters: unknown) => {
   if (!isRecord(parameters) || typeof parameters.query !== 'string') {
@@ -641,9 +677,14 @@ export function App() {
   const [requestNotice, setRequestNotice] = useState<string | null>(null);
   const [serviceState, setServiceState] =
     useState<ServiceStatusMap>(createEmptyServiceState());
+  const [usageState, setUsageState] = useState<UsageState>(
+    createInitialUsageState(),
+  );
   const [voiceRuntime, setVoiceRuntime] = useState<ElevenLabsVoiceRuntimeState>(
     createEmptyVoiceRuntimeState(),
   );
+  const pendingTypedUserMessagesRef = useRef<string[]>([]);
+  const shouldEndSessionForUsageRef = useRef(false);
   const pendingClientToolIdsRef = useRef<Record<string, string[]>>({});
   const toolActivityIdsRef = useRef<Record<string, string>>({});
   const toolSourceRef = useRef<Record<string, DebugActivity['source']>>({});
@@ -696,6 +737,78 @@ export function App() {
     pendingClientToolIdsRef.current = {};
     toolActivityIdsRef.current = {};
     toolSourceRef.current = {};
+  };
+
+  const loadUsageState = async () => {
+    const response = await sendUsageMessage({
+      type: 'usage:get-state',
+    });
+
+    if (response.usage) {
+      setUsageState(response.usage);
+    }
+
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+
+    return response.usage;
+  };
+
+  const consumeUsage = async (source: 'chat' | 'voice') => {
+    const response = await sendUsageMessage({
+      source,
+      type: 'usage:consume-user-message',
+    });
+
+    if (response.usage) {
+      setUsageState(response.usage);
+    }
+
+    if (!response.ok) {
+      throw new Error(response.error);
+    }
+
+    return response.usage;
+  };
+
+  const applyPostMessageUsage = (nextUsage: UsageState) => {
+    if (!nextUsage.allowed) {
+      shouldEndSessionForUsageRef.current = true;
+      setRequestError(null);
+      setRequestNotice(
+        'Last trial message sent. Rockitt will end the live session after this reply.',
+      );
+      return;
+    }
+
+    if (nextUsage.remaining <= 2) {
+      setRequestNotice(
+        `${String(nextUsage.remaining)} trial ${pluralize(nextUsage.remaining, 'message')} left in the current 24-hour window.`,
+      );
+    }
+  };
+
+  const maybeConsumeVoiceUsage = (message: string) => {
+    const normalizedMessage = normalizeUserMessageForQuota(message);
+    const [nextTypedMessage, ...rest] = pendingTypedUserMessagesRef.current;
+
+    if (nextTypedMessage === normalizedMessage) {
+      pendingTypedUserMessagesRef.current = rest;
+      return;
+    }
+
+    void consumeUsage('voice')
+      .then((nextUsage) => {
+        applyPostMessageUsage(nextUsage);
+      })
+      .catch((error) => {
+        setRequestError(
+          error instanceof Error
+            ? error.message
+            : 'Unable to update the local trial limit.',
+        );
+      });
   };
 
   const setToolMessage = (
@@ -995,6 +1108,7 @@ export function App() {
     onConnect: () => {
       setRequestError(null);
       setRequestNotice('Voice session live.');
+      shouldEndSessionForUsageRef.current = false;
       addSessionDebugActivity(
         'Voice session connected',
         'The live ElevenLabs session is active.',
@@ -1003,6 +1117,8 @@ export function App() {
     },
     onDisconnect: (details) => {
       setIsAwaitingReply(false);
+      pendingTypedUserMessagesRef.current = [];
+      shouldEndSessionForUsageRef.current = false;
 
       const nextError = formatDisconnectError(details);
       const summary = formatDisconnectSummary(details);
@@ -1106,6 +1222,18 @@ export function App() {
 
       if (type !== 'stop') {
         setIsAwaitingReply(false);
+        return;
+      }
+
+      if (
+        shouldEndSessionForUsageRef.current &&
+        conversation.status === 'connected'
+      ) {
+        shouldEndSessionForUsageRef.current = false;
+        setRequestNotice(
+          `Trial limit reached. Voice resumes after ${formatUsageResetAt(usageState.resetsAt)}.`,
+        );
+        void conversation.endSession();
       }
     },
     onDebug: (info) => {
@@ -1150,6 +1278,10 @@ export function App() {
       );
 
       setIsAwaitingReply(role === 'user');
+
+      if (role === 'user') {
+        maybeConsumeVoiceUsage(message);
+      }
     },
     onModeChange: ({ mode }) => {
       if (mode === 'speaking') {
@@ -1162,9 +1294,11 @@ export function App() {
 
   const applyServiceResponse = (
     nextState: ServiceStatusMap,
+    nextUsage: UsageState,
     nextVoiceRuntime: ElevenLabsVoiceRuntimeState,
   ) => {
     setServiceState(nextState);
+    setUsageState(nextUsage);
     setVoiceRuntime(nextVoiceRuntime);
   };
 
@@ -1184,10 +1318,16 @@ export function App() {
       });
 
       if (!response.ok) {
-        if (response.state && response.voiceRuntime) {
-          applyServiceResponse(response.state, response.voiceRuntime);
+        if (response.state && response.voiceRuntime && response.usage) {
+          applyServiceResponse(
+            response.state,
+            response.usage,
+            response.voiceRuntime,
+          );
         } else if (response.state) {
           setServiceState(response.state);
+        } else if (response.usage) {
+          setUsageState(response.usage);
         } else if (response.voiceRuntime) {
           setVoiceRuntime(response.voiceRuntime);
         }
@@ -1196,7 +1336,7 @@ export function App() {
         return response.state ?? null;
       }
 
-      applyServiceResponse(response.state, response.voiceRuntime);
+      applyServiceResponse(response.state, response.usage, response.voiceRuntime);
       return response.state;
     } catch (error) {
       setRequestError(
@@ -1307,6 +1447,12 @@ export function App() {
     setRequestNotice(null);
 
     try {
+      const currentUsage = await loadUsageState();
+
+      if (!currentUsage.allowed) {
+        throw new Error(getUsageBlockedMessage(currentUsage));
+      }
+
       const hasMicrophoneAccess = await ensureMicrophoneAccess();
 
       if (!hasMicrophoneAccess) {
@@ -1332,6 +1478,8 @@ export function App() {
       setVoiceRuntime(response.runtime);
       setMessages([]);
       setIsAwaitingReply(false);
+      pendingTypedUserMessagesRef.current = [];
+      shouldEndSessionForUsageRef.current = false;
 
       await conversation.startSession({
         connectionType: 'webrtc',
@@ -1403,14 +1551,32 @@ export function App() {
       return;
     }
 
-    if (microphoneState !== 'granted') {
-      await openMicrophonePermissionPage();
-      return;
-    }
-
     if (conversation.status === 'connected') {
       setRequestNotice(null);
       await conversation.endSession();
+      return;
+    }
+
+    try {
+      const currentUsage = await loadUsageState();
+
+      if (!currentUsage.allowed) {
+        setRequestError(getUsageBlockedMessage(currentUsage));
+        setPanelMode('voice');
+        return;
+      }
+    } catch (error) {
+      setRequestError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to read the local trial limit.',
+      );
+      setPanelMode('voice');
+      return;
+    }
+
+    if (microphoneState !== 'granted') {
+      await openMicrophonePermissionPage();
       return;
     }
 
@@ -1442,7 +1608,7 @@ export function App() {
     }
   };
 
-  const handleChatSubmit = () => {
+  const handleChatSubmit = async () => {
     const trimmedDraft = chatDraft.trim();
 
     if (!trimmedDraft) {
@@ -1454,9 +1620,34 @@ export function App() {
       return;
     }
 
-    conversation.sendUserMessage(trimmedDraft);
-    setChatDraft('');
-    setIsAwaitingReply(true);
+    setRequestError(null);
+
+    try {
+      const nextUsage = await consumeUsage('chat');
+      const normalizedMessage = normalizeUserMessageForQuota(trimmedDraft);
+      pendingTypedUserMessagesRef.current = [
+        ...pendingTypedUserMessagesRef.current,
+        normalizedMessage,
+      ];
+
+      try {
+        conversation.sendUserMessage(trimmedDraft);
+      } catch (error) {
+        pendingTypedUserMessagesRef.current =
+          pendingTypedUserMessagesRef.current.slice(0, -1);
+        throw error;
+      }
+
+      setChatDraft('');
+      setIsAwaitingReply(true);
+      applyPostMessageUsage(nextUsage);
+    } catch (error) {
+      setRequestError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to update the local trial limit.',
+      );
+    }
   };
 
   const toggleMode = () => {
@@ -1612,6 +1803,7 @@ export function App() {
   const liveWebMeta = isManagedLiveWebReady
     ? 'Live web lookup ready via the Rockitt backend.'
     : serviceState.firecrawl.detail ?? serviceState.firecrawl.summary;
+  const usageMeta = getUsageDetailCopy(usageState);
   const pageContextMeta =
     'Current-tab context is read locally only when the question is about the page.';
   const settingsDetails = [
@@ -1630,6 +1822,10 @@ export function App() {
     {
       label: 'Live web',
       value: liveWebMeta,
+    },
+    {
+      label: 'Trial limit',
+      value: usageMeta,
     },
     {
       label: 'Page context',
@@ -1728,7 +1924,9 @@ export function App() {
                 inert={panelMode !== 'chat'}
               >
                 <ConversationView
-                  canSend={conversation.status === 'connected'}
+                  canSend={
+                    conversation.status === 'connected' && usageState.allowed
+                  }
                   draft={chatDraft}
                   isAwaitingReply={isAwaitingReply}
                   isLive={isVoiceSessionLive}
@@ -1740,7 +1938,7 @@ export function App() {
                   onBackToVoice={toggleMode}
                   onChangeDraft={handleChatDraftChange}
                   onSubmit={() => {
-                    handleChatSubmit();
+                    void handleChatSubmit();
                   }}
                   onToggleLive={() => {
                     void handleLiveToggle();

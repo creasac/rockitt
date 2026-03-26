@@ -35,11 +35,20 @@ import {
   type ServiceStatus,
   type ServiceStatusMap,
 } from '../lib/service-runtime';
+import {
+  createInitialUsageState,
+  type UsageBackgroundMessage,
+  type UsageBackgroundResponse,
+  type UsageState,
+  usageMessageLimit,
+  usageWindowMs,
+} from '../lib/usage-runtime';
 
 const maxFirecrawlResultCount = 5;
 const maxFirecrawlScrapeMarkdownChars = 12_000;
 const backendHealthCacheTtlMs = 30_000;
 const backendInstallIdStorageKey = 'rockitt.install-id';
+const localUsageTimestampsStorageKey = 'rockitt.usage.user-message-timestamps.v1';
 const firecrawlSearchModes: FirecrawlSearchMode[] = [
   'web',
   'news',
@@ -154,6 +163,9 @@ const readResponseMessage = async (response: Response) => {
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   typeof value === 'object' && value !== null;
+
+const isFiniteNumber = (value: unknown): value is number =>
+  typeof value === 'number' && Number.isFinite(value);
 
 const readStringField = (value: unknown, key: string) => {
   if (!isObject(value)) {
@@ -405,6 +417,94 @@ const getOrCreateInstallId = async () => {
   });
 
   return nextId;
+};
+
+const areNumberArraysEqual = (left: number[], right: number[]) =>
+  left.length === right.length &&
+  left.every((value, index) => value === right[index]);
+
+const normalizeUsageTimestamps = (value: unknown, now = Date.now()) => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  const cutoff = now - usageWindowMs;
+
+  return value
+    .filter(isFiniteNumber)
+    .map((timestamp) => Math.trunc(timestamp))
+    .filter((timestamp) => timestamp > cutoff && timestamp > 0 && timestamp <= now)
+    .sort((left, right) => left - right);
+};
+
+const toUsageState = (timestamps: number[], now = Date.now()): UsageState => {
+  const used = timestamps.length;
+  const remaining = Math.max(0, usageMessageLimit - used);
+
+  return {
+    allowed: remaining > 0,
+    checkedAt: new Date(now).toISOString(),
+    limit: usageMessageLimit,
+    remaining,
+    resetsAt:
+      timestamps.length > 0
+        ? new Date(timestamps[0] + usageWindowMs).toISOString()
+        : null,
+    used,
+    windowKind: 'rolling-24h',
+  };
+};
+
+const createUsageLimitErrorMessage = (usage: UsageState) =>
+  usage.resetsAt
+    ? `This temporary trial allows ${String(usage.limit)} user messages per rolling 24 hours. Try again after ${new Date(usage.resetsAt).toLocaleString()}.`
+    : `This temporary trial allows ${String(usage.limit)} user messages per rolling 24 hours. Try again after the current window resets.`;
+
+const getStoredUsageTimestamps = async (now = Date.now()) => {
+  const stored = await chrome.storage.local.get(localUsageTimestampsStorageKey);
+  const rawValue = stored[localUsageTimestampsStorageKey];
+  const normalized = normalizeUsageTimestamps(rawValue, now);
+  const current = Array.isArray(rawValue)
+    ? rawValue.filter(isFiniteNumber).map((value) => Math.trunc(value))
+    : [];
+
+  if (!areNumberArraysEqual(current, normalized)) {
+    await chrome.storage.local.set({
+      [localUsageTimestampsStorageKey]: normalized,
+    });
+  }
+
+  return normalized;
+};
+
+const loadUsageState = async (): Promise<UsageState> => {
+  const now = Date.now();
+  const timestamps = await getStoredUsageTimestamps(now);
+  return toUsageState(timestamps, now);
+};
+
+const consumeUserMessageUsage = async (): Promise<UsageBackgroundResponse> => {
+  const now = Date.now();
+  const timestamps = await getStoredUsageTimestamps(now);
+  const currentUsage = toUsageState(timestamps, now);
+
+  if (!currentUsage.allowed) {
+    return {
+      ok: false,
+      error: createUsageLimitErrorMessage(currentUsage),
+      usage: currentUsage,
+    };
+  }
+
+  const nextTimestamps = [...timestamps, now];
+  await chrome.storage.local.set({
+    [localUsageTimestampsStorageKey]: nextTimestamps,
+  });
+
+  return {
+    ok: true,
+    usage: toUsageState(nextTimestamps, now),
+  };
 };
 
 const fetchBackendJson = async (
@@ -780,6 +880,12 @@ const executeReadablePageContext = async (
 };
 
 const startVoiceSession = async (): Promise<ElevenLabsBackgroundResponse> => {
+  const usage = await loadUsageState();
+
+  if (!usage.allowed) {
+    throw new Error(createUsageLimitErrorMessage(usage));
+  }
+
   const snapshot = await loadManagedServiceSnapshot();
 
   if (
@@ -849,12 +955,14 @@ const toServiceErrorResponse = async (
     ),
     voiceRuntime: createEmptyVoiceRuntimeState(),
   }));
+  const usage = await loadUsageState().catch(() => createInitialUsageState());
 
   return {
     ok: false,
     error:
       error instanceof Error ? error.message : 'Unknown extension error occurred.',
     state: snapshot.state,
+    usage,
     voiceRuntime: snapshot.voiceRuntime,
   };
 };
@@ -864,10 +972,14 @@ const handleServiceMessage = async (
 ): Promise<ServiceBackgroundResponse> => {
   switch (message.type) {
     case 'service-status:get-state': {
-      const snapshot = await loadManagedServiceSnapshot();
+      const [snapshot, usage] = await Promise.all([
+        loadManagedServiceSnapshot(),
+        loadUsageState(),
+      ]);
       return {
         ok: true,
         state: snapshot.state,
+        usage,
         voiceRuntime: snapshot.voiceRuntime,
       };
     }
@@ -875,6 +987,33 @@ const handleServiceMessage = async (
       return {
         ok: false,
         error: 'Unsupported managed service message.',
+      };
+  }
+};
+
+const toUsageErrorResponse = async (
+  error: unknown,
+): Promise<UsageBackgroundResponse> => ({
+  ok: false,
+  error: error instanceof Error ? error.message : 'Unknown usage error occurred.',
+  usage: await loadUsageState().catch(() => createInitialUsageState()),
+});
+
+const handleUsageMessage = async (
+  message: UsageBackgroundMessage,
+): Promise<UsageBackgroundResponse> => {
+  switch (message.type) {
+    case 'usage:get-state':
+      return {
+        ok: true,
+        usage: await loadUsageState(),
+      };
+    case 'usage:consume-user-message':
+      return consumeUserMessageUsage();
+    default:
+      return {
+        ok: false,
+        error: 'Unsupported usage message.',
       };
   }
 };
@@ -1004,6 +1143,16 @@ export default defineBackground(() => {
         .then(sendResponse)
         .catch(async (error) => {
           sendResponse(await toServiceErrorResponse(error));
+        });
+
+      return true;
+    }
+
+    if (message.type.startsWith('usage:')) {
+      void handleUsageMessage(message as UsageBackgroundMessage)
+        .then(sendResponse)
+        .catch(async (error) => {
+          sendResponse(await toUsageErrorResponse(error));
         });
 
       return true;

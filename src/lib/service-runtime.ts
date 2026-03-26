@@ -1,4 +1,5 @@
 import type { ElevenLabsVoiceRuntimeState } from './voice-agent';
+import type { UsageState } from './usage-runtime';
 
 export const serviceCatalog = {
   backend: {
@@ -36,12 +37,14 @@ export type ServiceBackgroundResponse =
   | {
       ok: true;
       state: ServiceStatusMap;
+      usage: UsageState;
       voiceRuntime: ElevenLabsVoiceRuntimeState;
     }
   | {
       ok: false;
       error: string;
       state?: ServiceStatusMap;
+      usage?: UsageState;
       voiceRuntime?: ElevenLabsVoiceRuntimeState;
     };
 

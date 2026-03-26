@@ -186,8 +186,8 @@ export function SettingsSheet({
 
       <p className="settings-sheet__footnote">
         Keep provider secrets in Cloudflare Worker secrets, not in extension
-        storage. Local extension state should stay limited to UI state,
-        transcripts, and device-level preferences.
+        storage. Local extension state should stay limited to UI state, the
+        temporary trial quota, transcripts, and device-level preferences.
       </p>
     </aside>
   );
