@@ -380,10 +380,31 @@ button {
   border: 1px solid rgba(17, 19, 24, 0.06);
 }
 
+.message--tool {
+  align-self: flex-start;
+  max-width: 74%;
+  padding: 0.72rem 0.85rem;
+  border: 1px dashed rgba(17, 19, 24, 0.12);
+  background: rgba(255, 255, 255, 0.68);
+}
+
 .message--user {
   align-self: flex-end;
   background: linear-gradient(145deg, #1b6cff 0%, #409dff 100%);
   color: white;
+}
+
+.message--running.message--tool {
+  border-color: rgba(20, 99, 255, 0.22);
+}
+
+.message--success.message--tool {
+  border-color: rgba(29, 155, 105, 0.2);
+}
+
+.message--error.message--tool {
+  border-color: rgba(201, 84, 84, 0.26);
+  background: rgba(255, 245, 245, 0.86);
 }
 
 .message--pending {
@@ -646,6 +667,16 @@ button {
 .debug-entry__badge--firecrawl {
   background: rgba(126, 216, 255, 0.22);
   color: #155a8a;
+}
+
+.debug-entry__badge--browser {
+  background: rgba(29, 155, 105, 0.14);
+  color: var(--success);
+}
+
+.debug-entry__badge--agent {
+  background: rgba(17, 19, 24, 0.08);
+  color: var(--ink);
 }
 
 .debug-entry__badge--session {

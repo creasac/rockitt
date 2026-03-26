@@ -3,9 +3,10 @@ import type { ReactNode } from 'react';
 
 type ChatMessage = {
   id: string;
-  role: 'user' | 'assistant';
-  text: string;
   meta?: string;
+  role: 'assistant' | 'tool' | 'user';
+  status?: 'error' | 'running' | 'success';
+  text: string;
 };
 
 type ConversationViewProps = {
@@ -50,7 +51,7 @@ export function ConversationView({
           messages.map((message) => (
             <article
               key={message.id}
-              className={`message message--${message.role}`}
+              className={`message message--${message.role}${message.status ? ` message--${message.status}` : ''}`}
             >
               <p className="message__text">{message.text}</p>
               {message.meta ? (

@@ -3,6 +3,10 @@ import type {
   FirecrawlBackgroundResponse,
 } from './firecrawl';
 import type {
+  PageContextBackgroundMessage,
+  PageContextBackgroundResponse,
+} from './page-context';
+import type {
   BackgroundMessage,
   BackgroundResponse,
 } from './provider-settings';
@@ -25,3 +29,8 @@ export const sendFirecrawlMessage = async (
   message: FirecrawlBackgroundMessage,
 ): Promise<FirecrawlBackgroundResponse> =>
   chrome.runtime.sendMessage(message) as Promise<FirecrawlBackgroundResponse>;
+
+export const sendPageContextMessage = async (
+  message: PageContextBackgroundMessage,
+): Promise<PageContextBackgroundResponse> =>
+  chrome.runtime.sendMessage(message) as Promise<PageContextBackgroundResponse>;

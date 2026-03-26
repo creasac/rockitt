@@ -1,6 +1,6 @@
 import { useConversation } from '@elevenlabs/react';
 import { Settings2 } from 'lucide-react';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { ConversationView } from '../../components/ConversationView';
 import {
@@ -11,6 +11,7 @@ import { SettingsSheet } from '../../components/SettingsSheet';
 import { VoiceOrb } from '../../components/VoiceOrb';
 import {
   sendFirecrawlMessage,
+  sendPageContextMessage,
   sendProviderMessage,
   sendVoiceMessage,
 } from '../../lib/background-client';
@@ -24,6 +25,11 @@ import {
   type PanelMode,
   type VoiceState,
 } from '../../lib/mock-data';
+import {
+  pageContextToolNames,
+  type ReadablePageContextToolResult,
+  type VisiblePageContextToolResult,
+} from '../../lib/page-context';
 import {
   createEmptyProviderState,
   providerCatalog,
@@ -41,11 +47,13 @@ import {
 } from '../../lib/microphone-permission';
 
 type LiveChatMessage = {
-  id: string;
-  role: 'user' | 'assistant';
-  text: string;
-  meta?: string;
   eventId?: number;
+  id: string;
+  meta?: string;
+  role: 'assistant' | 'tool' | 'user';
+  status?: 'error' | 'running' | 'success';
+  text: string;
+  toolCallId?: string;
 };
 
 const emptyDraftState: Record<ProviderId, string> = {
@@ -60,22 +68,27 @@ const elevenLabsWorkletPaths = {
   rawAudioProcessor: chrome.runtime.getURL('elevenlabs/rawAudioProcessor.js'),
 };
 
+const pageContextToolStatusCopy = {
+  [pageContextToolNames.readable]: 'Reading more from the current page.',
+  [pageContextToolNames.visible]: 'Reading what is visible in the current page.',
+} as const;
+
 const firecrawlToolStatusCopy = {
   [firecrawlToolNames.scrape]: 'Fetching a live web page with Firecrawl.',
   [firecrawlToolNames.search]: 'Checking the live web with Firecrawl.',
 } as const;
 
-const firecrawlToolTitleCopy = {
+const knownToolTitleCopy = {
+  end_call: 'End call',
   [firecrawlToolNames.scrape]: 'Firecrawl scrape',
   [firecrawlToolNames.search]: 'Firecrawl search',
+  [pageContextToolNames.readable]: 'Page detail',
+  [pageContextToolNames.visible]: 'Visible page',
 } as const;
 
 const debugActivityStorageKey = 'rockitt.debug-activity.v1';
 const maxDebugActivityCount = 24;
 const clientToolErrorPrefix = 'Client tool execution failed with following error: ';
-
-type FirecrawlToolName =
-  (typeof firecrawlToolNames)[keyof typeof firecrawlToolNames];
 
 const isDomException = (value: unknown): value is DOMException =>
   value instanceof DOMException;
@@ -129,15 +142,75 @@ const getFirecrawlScrapeUrl = (parameters: unknown) => {
   return parameters.url;
 };
 
-const getFirecrawlStartSummary = (
-  toolName: FirecrawlToolName,
-  parameters: unknown,
-) => {
-  if (toolName === firecrawlToolNames.search) {
-    return `Started a live web search for ${getFirecrawlSearchQuery(parameters)}.`;
+const toTitleCase = (value: string) =>
+  value.replace(/\b\w/g, (character) => character.toUpperCase());
+
+const getToolTitle = (toolName: string) => {
+  if (toolName in knownToolTitleCopy) {
+    return knownToolTitleCopy[toolName as keyof typeof knownToolTitleCopy];
   }
 
-  return `Started fetching ${getFirecrawlScrapeUrl(parameters)} with Firecrawl.`;
+  return toTitleCase(toolName.replace(/_/g, ' '));
+};
+
+const getToolSource = (
+  toolName: string,
+  toolType: string,
+): DebugActivity['source'] => {
+  if (
+    toolName === pageContextToolNames.visible ||
+    toolName === pageContextToolNames.readable
+  ) {
+    return 'browser';
+  }
+
+  if (
+    toolName === firecrawlToolNames.search ||
+    toolName === firecrawlToolNames.scrape
+  ) {
+    return 'firecrawl';
+  }
+
+  return toolType === 'client' ? 'browser' : 'agent';
+};
+
+const getToolRequestSummary = (toolName: string) => {
+  if (toolName === pageContextToolNames.visible) {
+    return 'Rockitt started reading what is visible in the active tab.';
+  }
+
+  if (toolName === pageContextToolNames.readable) {
+    return 'Rockitt started reading more of the current page.';
+  }
+
+  if (toolName === firecrawlToolNames.search) {
+    return 'Rockitt started a Firecrawl web search.';
+  }
+
+  if (toolName === firecrawlToolNames.scrape) {
+    return 'Rockitt started a Firecrawl page scrape.';
+  }
+
+  return `${getToolTitle(toolName)} was requested by the agent.`;
+};
+
+const summarizeVisiblePageContextResult = (
+  result: VisiblePageContextToolResult,
+) => {
+  const headingCopy = result.mainHeading ? ` Main heading: ${result.mainHeading}.` : '';
+  const blockCount = result.visibleTextBlocks.length;
+  const linkCount = result.visibleLinks.length;
+
+  return `Read the visible ${result.pageType} view with ${String(blockCount)} text ${pluralize(blockCount, 'block')} and ${String(linkCount)} visible ${pluralize(linkCount, 'link')}.${headingCopy}`;
+};
+
+const summarizeReadablePageContextResult = (
+  result: ReadablePageContextToolResult,
+) => {
+  const sectionCount = result.matchedSections.length;
+  const questionCopy = result.question ? ` for "${result.question}"` : '';
+
+  return `Read ${String(sectionCount)} relevant ${pluralize(sectionCount, 'section')}${questionCopy} from the current ${result.pageType} page.`;
 };
 
 const getFirecrawlSearchTarget = (result: FirecrawlSearchToolResult) =>
@@ -173,6 +246,46 @@ const summarizeFirecrawlScrapeResult = (result: FirecrawlScrapeToolResult) => {
   return `Fetched ${result.url}${statusCopy}.${titleCopy}${truncationCopy}`;
 };
 
+const getToolResponseSummary = (
+  toolName: string,
+  options: {
+    isError: boolean;
+    isCalled: boolean;
+  },
+) => {
+  if (options.isError) {
+    return `${getToolTitle(toolName)} failed.`;
+  }
+
+  if (!options.isCalled) {
+    return `${getToolTitle(toolName)} was skipped by the agent.`;
+  }
+
+  return `${getToolTitle(toolName)} completed successfully.`;
+};
+
+const getToolMessageMeta = (
+  status: NonNullable<LiveChatMessage['status']>,
+  source: DebugActivity['source'],
+) => {
+  const sourceCopy =
+    source === 'browser'
+      ? 'Browser tool'
+      : source === 'firecrawl'
+        ? 'Firecrawl tool'
+        : 'Agent tool';
+
+  if (status === 'running') {
+    return `${sourceCopy} • Running`;
+  }
+
+  if (status === 'error') {
+    return `${sourceCopy} • Failed`;
+  }
+
+  return `${sourceCopy} • Complete`;
+};
+
 const normalizeConversationError = (message: string) =>
   message.startsWith(clientToolErrorPrefix)
     ? message.slice(clientToolErrorPrefix.length)
@@ -182,6 +295,21 @@ const upsertLiveMessage = (
   messages: LiveChatMessage[],
   nextMessage: LiveChatMessage,
 ) => {
+  if (nextMessage.toolCallId) {
+    const existingIndex = messages.findIndex(
+      (message) => message.toolCallId === nextMessage.toolCallId,
+    );
+
+    if (existingIndex === -1) {
+      return [...messages, nextMessage];
+    }
+
+    const nextMessages = [...messages];
+    nextMessages[existingIndex] = nextMessage;
+
+    return nextMessages;
+  }
+
   if (nextMessage.eventId == null) {
     return [...messages, nextMessage];
   }
@@ -308,6 +436,9 @@ export function App() {
   const [voiceRuntime, setVoiceRuntime] = useState<ElevenLabsVoiceRuntimeState>(
     createEmptyVoiceRuntimeState(),
   );
+  const pendingClientToolIdsRef = useRef<Record<string, string[]>>({});
+  const toolActivityIdsRef = useRef<Record<string, string>>({});
+  const toolSourceRef = useRef<Record<string, DebugActivity['source']>>({});
 
   const appendDebugActivity = (
     activity: Omit<DebugActivity, 'createdAt' | 'id'> &
@@ -354,31 +485,118 @@ export function App() {
 
   const clearDebugActivities = () => {
     setDebugActivities([]);
+    pendingClientToolIdsRef.current = {};
+    toolActivityIdsRef.current = {};
+    toolSourceRef.current = {};
   };
 
-  const runFirecrawlTool = async (
-    toolName: FirecrawlToolName,
+  const setToolMessage = (
+    toolCallId: string,
+    toolName: string,
+    source: DebugActivity['source'],
+    status: NonNullable<LiveChatMessage['status']>,
+  ) => {
+    setMessages((currentMessages) =>
+      upsertLiveMessage(currentMessages, {
+        id: `tool-${toolCallId}`,
+        meta: getToolMessageMeta(status, source),
+        role: 'tool',
+        status,
+        text: getToolTitle(toolName),
+        toolCallId,
+      }),
+    );
+  };
+
+  const ensureToolActivity = (
+    toolCallId: string,
+    toolName: string,
+    toolType: string,
+  ) => {
+    const existingActivityId = toolActivityIdsRef.current[toolCallId];
+
+    if (existingActivityId) {
+      return existingActivityId;
+    }
+
+    const source = getToolSource(toolName, toolType);
+    const activityId = appendDebugActivity({
+      source,
+      status: 'running',
+      summary: getToolRequestSummary(toolName),
+      title: getToolTitle(toolName),
+      toolCall: {
+        name: toolName,
+        toolCallId,
+        type: toolType,
+      },
+    });
+
+    toolActivityIdsRef.current[toolCallId] = activityId;
+    toolSourceRef.current[toolCallId] = source;
+    setToolMessage(toolCallId, toolName, source, 'running');
+
+    return activityId;
+  };
+
+  const enqueuePendingClientTool = (toolName: string, toolCallId: string) => {
+    const queue = pendingClientToolIdsRef.current[toolName] ?? [];
+    pendingClientToolIdsRef.current[toolName] = [...queue, toolCallId];
+  };
+
+  const dequeuePendingClientTool = (toolName: string) => {
+    const queue = pendingClientToolIdsRef.current[toolName] ?? [];
+
+    if (!queue.length) {
+      return null;
+    }
+
+    const [toolCallId, ...rest] = queue;
+    pendingClientToolIdsRef.current[toolName] = rest;
+    return toolCallId;
+  };
+
+  const registerToolRequest = (
+    toolName: string,
+    toolType: string,
+    toolCallId: string,
+  ) => {
+    ensureToolActivity(toolCallId, toolName, toolType);
+
+    if (toolType === 'client') {
+      enqueuePendingClientTool(toolName, toolCallId);
+    }
+  };
+
+  const executeFirecrawlTool = async (
+    toolName:
+      | typeof firecrawlToolNames.scrape
+      | typeof firecrawlToolNames.search,
     parameters: unknown,
   ) => {
     setRequestError(null);
     setRequestNotice(firecrawlToolStatusCopy[toolName]);
 
-    const activityId = appendDebugActivity({
-      firecrawl:
-        toolName === firecrawlToolNames.search
-          ? {
-              kind: 'search',
-              parameters,
-            }
-          : {
-              kind: 'scrape',
-              parameters,
-            },
-      source: 'firecrawl',
+    const toolCallId = dequeuePendingClientTool(toolName) ?? createDebugActivityId();
+    const activityId = ensureToolActivity(toolCallId, toolName, 'client');
+    const source = toolSourceRef.current[toolCallId] ?? 'firecrawl';
+
+    updateDebugActivity(activityId, (activity) => ({
+      ...activity,
+      source,
       status: 'running',
-      summary: getFirecrawlStartSummary(toolName, parameters),
-      title: firecrawlToolTitleCopy[toolName],
-    });
+      summary:
+        toolName === firecrawlToolNames.search
+          ? `Started a live web search for ${getFirecrawlSearchQuery(parameters)}.`
+          : `Started fetching ${getFirecrawlScrapeUrl(parameters)} with Firecrawl.`,
+      toolCall: {
+        name: toolName,
+        parameters,
+        toolCallId,
+        type: 'client',
+      },
+    }));
+    setToolMessage(toolCallId, toolName, source, 'running');
 
     try {
       const response = await sendFirecrawlMessage(
@@ -397,33 +615,29 @@ export function App() {
         throw new Error(response.error);
       }
 
-      if (toolName === firecrawlToolNames.search) {
-        const result = response.result as FirecrawlSearchToolResult;
+      const summary =
+        toolName === firecrawlToolNames.search
+          ? summarizeFirecrawlSearchResult(
+              response.result as FirecrawlSearchToolResult,
+            )
+          : summarizeFirecrawlScrapeResult(
+              response.result as FirecrawlScrapeToolResult,
+            );
 
-        updateDebugActivity(activityId, (activity) => ({
-          ...activity,
-          firecrawl: {
-            kind: 'search',
-            parameters,
-            result,
-          },
-          status: 'success',
-          summary: summarizeFirecrawlSearchResult(result),
-        }));
-      } else {
-        const result = response.result as FirecrawlScrapeToolResult;
-
-        updateDebugActivity(activityId, (activity) => ({
-          ...activity,
-          firecrawl: {
-            kind: 'scrape',
-            parameters,
-            result,
-          },
-          status: 'success',
-          summary: summarizeFirecrawlScrapeResult(result),
-        }));
-      }
+      updateDebugActivity(activityId, (activity) => ({
+        ...activity,
+        status: 'success',
+        summary,
+        toolCall: {
+          name: toolName,
+          parameters,
+          result: response.result,
+          toolCallId,
+          type: 'client',
+        },
+      }));
+      setToolMessage(toolCallId, toolName, source, 'success');
+      setRequestNotice('Live web lookup complete.');
 
       return JSON.stringify(response.result);
     } catch (error) {
@@ -434,8 +648,116 @@ export function App() {
         ...activity,
         error: nextError,
         status: 'error',
-        summary: `${firecrawlToolTitleCopy[toolName]} failed: ${nextError}`,
+        summary: `${getToolTitle(toolName)} failed: ${nextError}`,
+        toolCall: {
+          ...(activity.toolCall ?? {
+            name: toolName,
+            toolCallId,
+            type: 'client',
+          }),
+          name: toolName,
+          parameters,
+          toolCallId,
+          type: 'client',
+        },
       }));
+      setToolMessage(toolCallId, toolName, source, 'error');
+
+      throw new Error(nextError);
+    }
+  };
+
+  const executePageContextTool = async (
+    toolName:
+      | typeof pageContextToolNames.readable
+      | typeof pageContextToolNames.visible,
+    parameters: unknown,
+  ) => {
+    setRequestError(null);
+    setRequestNotice(pageContextToolStatusCopy[toolName]);
+
+    const toolCallId = dequeuePendingClientTool(toolName) ?? createDebugActivityId();
+    const activityId = ensureToolActivity(toolCallId, toolName, 'client');
+    const source = toolSourceRef.current[toolCallId] ?? 'browser';
+
+    updateDebugActivity(activityId, (activity) => ({
+      ...activity,
+      source,
+      status: 'running',
+      summary: getToolRequestSummary(toolName),
+      toolCall: {
+        name: toolName,
+        parameters,
+        toolCallId,
+        type: 'client',
+      },
+    }));
+    setToolMessage(toolCallId, toolName, source, 'running');
+
+    try {
+      const response = await sendPageContextMessage(
+        toolName === pageContextToolNames.visible
+          ? {
+              type: 'page-context:get-visible',
+              parameters,
+            }
+          : {
+              type: 'page-context:get-readable',
+              parameters,
+            },
+      );
+
+      if (!response.ok) {
+        throw new Error(response.error);
+      }
+
+      const summary =
+        toolName === pageContextToolNames.visible
+          ? summarizeVisiblePageContextResult(
+              response.result as VisiblePageContextToolResult,
+            )
+          : summarizeReadablePageContextResult(
+              response.result as ReadablePageContextToolResult,
+            );
+
+      updateDebugActivity(activityId, (activity) => ({
+        ...activity,
+        status: 'success',
+        summary,
+        toolCall: {
+          name: toolName,
+          parameters,
+          result: response.result,
+          toolCallId,
+          type: 'client',
+        },
+      }));
+      setToolMessage(toolCallId, toolName, source, 'success');
+      setRequestNotice('Page context ready.');
+
+      return JSON.stringify(response.result);
+    } catch (error) {
+      const nextError =
+        error instanceof Error ? error.message : 'Unknown page context error.';
+
+      updateDebugActivity(activityId, (activity) => ({
+        ...activity,
+        error: nextError,
+        status: 'error',
+        summary: `${getToolTitle(toolName)} failed: ${nextError}`,
+        toolCall: {
+          ...(activity.toolCall ?? {
+            name: toolName,
+            toolCallId,
+            type: 'client',
+          }),
+          name: toolName,
+          parameters,
+          toolCallId,
+          type: 'client',
+        },
+      }));
+      setToolMessage(toolCallId, toolName, source, 'error');
 
       throw new Error(nextError);
     }
@@ -443,10 +765,14 @@ export function App() {
 
   const conversation = useConversation({
     clientTools: {
-      [firecrawlToolNames.search]: async (parameters) =>
-        runFirecrawlTool(firecrawlToolNames.search, parameters),
       [firecrawlToolNames.scrape]: async (parameters) =>
-        runFirecrawlTool(firecrawlToolNames.scrape, parameters),
+        executeFirecrawlTool(firecrawlToolNames.scrape, parameters),
+      [firecrawlToolNames.search]: async (parameters) =>
+        executeFirecrawlTool(firecrawlToolNames.search, parameters),
+      [pageContextToolNames.readable]: async (parameters) =>
+        executePageContextTool(pageContextToolNames.readable, parameters),
+      [pageContextToolNames.visible]: async (parameters) =>
+        executePageContextTool(pageContextToolNames.visible, parameters),
     },
     connectionDelay: {
       android: 750,
@@ -506,19 +832,56 @@ export function App() {
         );
       }
     },
-    onAgentToolResponse: ({ is_error, tool_name }) => {
-      if (
-        tool_name !== firecrawlToolNames.search &&
-        tool_name !== firecrawlToolNames.scrape
-      ) {
-        return;
+    onAgentToolRequest: ({ tool_call_id, tool_name, tool_type }) => {
+      registerToolRequest(tool_name, tool_type, tool_call_id);
+    },
+    onAgentToolResponse: ({
+      is_called,
+      is_error,
+      tool_call_id,
+      tool_name,
+      tool_type,
+    }) => {
+      const activityId = ensureToolActivity(tool_call_id, tool_name, tool_type);
+      const source =
+        toolSourceRef.current[tool_call_id] ?? getToolSource(tool_name, tool_type);
+
+      updateDebugActivity(activityId, (activity) => ({
+        ...activity,
+        source,
+        status: is_error ? 'error' : 'success',
+        summary:
+          !is_error && activity.toolCall?.result
+            ? activity.summary
+            : getToolResponseSummary(tool_name, {
+                isCalled: is_called,
+                isError: is_error,
+              }),
+        toolCall: {
+          ...(activity.toolCall ?? {
+            name: tool_name,
+            toolCallId: tool_call_id,
+            type: tool_type,
+          }),
+          name: tool_name,
+          toolCallId: tool_call_id,
+          type: tool_type,
+        },
+      }));
+      setToolMessage(
+        tool_call_id,
+        tool_name,
+        source,
+        is_error ? 'error' : 'success',
+      );
+
+      if (!is_error && tool_name in firecrawlToolStatusCopy) {
+        setRequestNotice('Live web lookup complete.');
       }
 
-      if (is_error) {
-        return;
+      if (!is_error && tool_name in pageContextToolStatusCopy) {
+        setRequestNotice('Page context ready.');
       }
-
-      setRequestNotice('Live web lookup complete.');
     },
     onMessage: ({ event_id, message, role }) => {
       setMessages((currentMessages) =>
@@ -1043,6 +1406,8 @@ export function App() {
   const liveWebMeta = providerState.firecrawl.hasKey
     ? 'Live web lookup ready via Firecrawl.'
     : 'Add a Firecrawl key to enable live web lookup.';
+  const pageContextMeta =
+    'Current-tab context is read locally only when the question is about the page.';
 
   return (
     <div className="app-frame">
@@ -1086,6 +1451,7 @@ export function App() {
                 <p className="voice-view__meta">{voiceMeta}</p>
                 <p className="voice-view__meta">{microphoneMeta}</p>
                 <p className="voice-view__meta">{liveWebMeta}</p>
+                <p className="voice-view__meta">{pageContextMeta}</p>
 
                 {requestNotice ? (
                   <div className="inline-banner inline-banner--notice" role="status">

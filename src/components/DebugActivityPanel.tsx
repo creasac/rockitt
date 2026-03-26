@@ -1,32 +1,34 @@
-import type {
-  FirecrawlScrapeToolResult,
-  FirecrawlSearchToolResult,
+import {
+  firecrawlToolNames,
+  type FirecrawlScrapeToolResult,
+  type FirecrawlSearchToolResult,
 } from '../lib/firecrawl';
+import {
+  pageContextToolNames,
+  type ReadablePageContextToolResult,
+  type VisiblePageContextToolResult,
+} from '../lib/page-context';
 
 type DebugActivityStatus = 'info' | 'running' | 'success' | 'error';
 
-type FirecrawlSearchActivity = {
-  kind: 'search';
-  parameters: unknown;
-  result?: FirecrawlSearchToolResult;
-};
-
-type FirecrawlScrapeActivity = {
-  kind: 'scrape';
-  parameters: unknown;
-  result?: FirecrawlScrapeToolResult;
+export type DebugToolCall = {
+  name: string;
+  parameters?: unknown;
+  result?: unknown;
+  toolCallId?: string;
+  type: string;
 };
 
 export type DebugActivity = {
   createdAt: string;
   error?: string;
-  firecrawl?: FirecrawlSearchActivity | FirecrawlScrapeActivity;
   id: string;
   raw?: unknown;
-  source: 'firecrawl' | 'session' | 'system';
+  source: 'agent' | 'browser' | 'firecrawl' | 'session' | 'system';
   status: DebugActivityStatus;
   summary: string;
   title: string;
+  toolCall?: DebugToolCall;
 };
 
 type DebugActivityPanelProps = {
@@ -42,6 +44,8 @@ const debugStatusLabel: Record<DebugActivityStatus, string> = {
 };
 
 const debugSourceLabel = {
+  agent: 'Agent',
+  browser: 'Browser',
   firecrawl: 'Firecrawl',
   session: 'Session',
   system: 'System',
@@ -70,6 +74,29 @@ const formatJson = (value: unknown) => {
     return String(value);
   }
 };
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+const isFirecrawlSearchResult = (
+  value: unknown,
+): value is FirecrawlSearchToolResult =>
+  isRecord(value) && value.tool === firecrawlToolNames.search;
+
+const isFirecrawlScrapeResult = (
+  value: unknown,
+): value is FirecrawlScrapeToolResult =>
+  isRecord(value) && value.tool === firecrawlToolNames.scrape;
+
+const isVisiblePageContextResult = (
+  value: unknown,
+): value is VisiblePageContextToolResult =>
+  isRecord(value) && value.tool === pageContextToolNames.visible;
+
+const isReadablePageContextResult = (
+  value: unknown,
+): value is ReadablePageContextToolResult =>
+  isRecord(value) && value.tool === pageContextToolNames.readable;
 
 const renderSearchResults = (result: FirecrawlSearchToolResult) => {
   if (!result.results.length) {
@@ -120,7 +147,9 @@ const renderScrapeResult = (result: FirecrawlScrapeToolResult) => (
       {result.title?.trim() || result.url}
     </a>
     <p className="debug-result__meta">
-      {result.statusCode != null ? `status ${String(result.statusCode)}` : 'status unavailable'}
+      {result.statusCode != null
+        ? `status ${String(result.statusCode)}`
+        : 'status unavailable'}
       {result.fetchedAt ? ` • ${result.fetchedAt}` : ''}
       {result.truncated ? ' • truncated markdown' : ''}
     </p>
@@ -139,11 +168,71 @@ const renderScrapeResult = (result: FirecrawlScrapeToolResult) => (
   </div>
 );
 
+const renderVisiblePageContext = (result: VisiblePageContextToolResult) => (
+  <div className="debug-result">
+    <a
+      className="debug-result__link"
+      href={result.url}
+      rel="noreferrer"
+      target="_blank"
+    >
+      {result.title || result.url}
+    </a>
+    <p className="debug-result__meta">
+      {result.pageType}
+      {result.mainHeading ? ` • ${result.mainHeading}` : ''}
+      {result.truncated ? ' • truncated' : ''}
+    </p>
+    {result.visibleTextBlocks.length ? (
+      <>
+        <p className="debug-entry__section-title">Visible Text</p>
+        <pre className="debug-entry__json">
+          {result.visibleTextBlocks.join('\n\n')}
+        </pre>
+      </>
+    ) : null}
+  </div>
+);
+
+const renderReadablePageContext = (result: ReadablePageContextToolResult) => (
+  <div className="debug-result">
+    <a
+      className="debug-result__link"
+      href={result.url}
+      rel="noreferrer"
+      target="_blank"
+    >
+      {result.title || result.url}
+    </a>
+    <p className="debug-result__meta">
+      {result.pageType}
+      {result.question ? ` • ${result.question}` : ''}
+      {result.truncated ? ' • truncated' : ''}
+    </p>
+    {result.summary ? (
+      <p className="debug-result__snippet">{result.summary}</p>
+    ) : null}
+    {result.matchedSections.length ? (
+      <>
+        <p className="debug-entry__section-title">Matched Sections</p>
+        <pre className="debug-entry__json">
+          {result.matchedSections
+            .map(
+              (section) =>
+                `${section.heading} (score ${String(section.score)})\n${section.text}`,
+            )
+            .join('\n\n')}
+        </pre>
+      </>
+    ) : null}
+  </div>
+);
+
 export function DebugActivityPanel({
   activities,
   onClear,
 }: DebugActivityPanelProps) {
-  const firecrawlCallCount = activities.filter((activity) => activity.firecrawl).length;
+  const toolCallCount = activities.filter((activity) => activity.toolCall).length;
   const runningCount = activities.filter(
     (activity) => activity.status === 'running',
   ).length;
@@ -154,13 +243,13 @@ export function DebugActivityPanel({
         <div>
           <p className="eyebrow">Debug Activity</p>
           <p className="debug-panel__headline">
-            {firecrawlCallCount
-              ? `Firecrawl called ${String(firecrawlCallCount)} time${firecrawlCallCount === 1 ? '' : 's'}`
-              : 'No Firecrawl calls yet'}
+            {toolCallCount
+              ? `${String(toolCallCount)} tool call${toolCallCount === 1 ? '' : 's'} recorded`
+              : 'No tool calls yet'}
           </p>
           <p className="debug-panel__copy">
             {runningCount
-              ? `${String(runningCount)} lookup still in flight.`
+              ? `${String(runningCount)} tool call${runningCount === 1 ? '' : 's'} still in flight.`
               : 'Tool and session activity stays here until you clear it.'}
           </p>
         </div>
@@ -208,17 +297,31 @@ export function DebugActivityPanel({
               <div className="debug-entry__body">
                 <p className="debug-entry__copy">{activity.summary}</p>
 
-                {activity.firecrawl?.kind === 'search' && activity.firecrawl.result ? (
+                {isFirecrawlSearchResult(activity.toolCall?.result) ? (
                   <>
                     <p className="debug-entry__section-title">Returned Links</p>
-                    {renderSearchResults(activity.firecrawl.result)}
+                    {renderSearchResults(activity.toolCall.result)}
                   </>
                 ) : null}
 
-                {activity.firecrawl?.kind === 'scrape' && activity.firecrawl.result ? (
+                {isFirecrawlScrapeResult(activity.toolCall?.result) ? (
                   <>
                     <p className="debug-entry__section-title">Fetched Page</p>
-                    {renderScrapeResult(activity.firecrawl.result)}
+                    {renderScrapeResult(activity.toolCall.result)}
+                  </>
+                ) : null}
+
+                {isVisiblePageContextResult(activity.toolCall?.result) ? (
+                  <>
+                    <p className="debug-entry__section-title">Visible Page</p>
+                    {renderVisiblePageContext(activity.toolCall.result)}
+                  </>
+                ) : null}
+
+                {isReadablePageContextResult(activity.toolCall?.result) ? (
+                  <>
+                    <p className="debug-entry__section-title">Readable Page</p>
+                    {renderReadablePageContext(activity.toolCall.result)}
                   </>
                 ) : null}
 
@@ -229,25 +332,25 @@ export function DebugActivityPanel({
                   </>
                 ) : null}
 
-                {activity.firecrawl ? (
+                {activity.toolCall?.parameters ? (
                   <>
                     <p className="debug-entry__section-title">Parameters</p>
                     <pre className="debug-entry__json">
-                      {formatJson(activity.firecrawl.parameters)}
+                      {formatJson(activity.toolCall.parameters)}
                     </pre>
                   </>
                 ) : null}
 
-                {activity.firecrawl?.result ? (
+                {activity.toolCall?.result ? (
                   <>
                     <p className="debug-entry__section-title">Raw Result</p>
                     <pre className="debug-entry__json">
-                      {formatJson(activity.firecrawl.result)}
+                      {formatJson(activity.toolCall.result)}
                     </pre>
                   </>
                 ) : null}
 
-                {!activity.firecrawl && activity.raw ? (
+                {!activity.toolCall && activity.raw ? (
                   <>
                     <p className="debug-entry__section-title">Raw Event</p>
                     <pre className="debug-entry__json">
@@ -262,7 +365,7 @@ export function DebugActivityPanel({
           <article className="debug-panel__empty">
             <p className="debug-panel__empty-title">No tool activity recorded</p>
             <p className="debug-panel__empty-copy">
-              If the agent never calls Firecrawl, this panel stays empty.
+              When Rockitt uses page tools or other agent tools, they appear here.
             </p>
           </article>
         )}

@@ -31,6 +31,17 @@ import {
   type FirecrawlSearchTimeRange,
   type FirecrawlSearchToolResult,
 } from '../lib/firecrawl';
+import { extractPageContextFromDocument } from '../lib/page-context-extractor';
+import {
+  pageContextToolNames,
+  type PageContextBackgroundMessage,
+  type PageContextBackgroundResponse,
+  type PageContextExtractionInput,
+  type ReadablePageContextSnapshot,
+  type ReadablePageContextToolResult,
+  type VisiblePageContextSnapshot,
+  type VisiblePageContextToolResult,
+} from '../lib/page-context';
 
 const elevenLabsApiBaseUrl = 'https://api.elevenlabs.io/v1';
 const firecrawlApiBaseUrl = 'https://api.firecrawl.dev/v2';
@@ -60,6 +71,7 @@ const firecrawlTimeRangeToTbs: Partial<
   'past-week': 'qdr:w',
   'past-year': 'qdr:y',
 };
+const maxReadablePageContextSections = 4;
 
 const toDebugDetails = (details: unknown) => {
   if (details == null) {
@@ -495,6 +507,23 @@ const parseFirecrawlScrapeParameters = (value: unknown) => {
   };
 };
 
+const parsePageContextReadableParameters = (
+  value: unknown,
+): Required<Pick<PageContextExtractionInput, 'maxSections'>> &
+  Pick<PageContextExtractionInput, 'question'> => {
+  const question = readStringField(value, 'question')?.trim() || undefined;
+  const maxSections = clamp(
+    Math.trunc(readNumberField(value, 'maxSections') ?? 3),
+    1,
+    maxReadablePageContextSections,
+  );
+
+  return {
+    maxSections,
+    question,
+  };
+};
+
 const normalizeFirecrawlResultItems = (
   value: unknown,
   source: FirecrawlResultItem['source'],
@@ -764,6 +793,108 @@ const executeFirecrawlScrape = async (
   };
 };
 
+const getActiveWebTab = async () => {
+  const [tab] = await chrome.tabs.query({
+    active: true,
+    lastFocusedWindow: true,
+  });
+
+  if (!tab?.id) {
+    throw new Error('No active browser tab is available.');
+  }
+
+  if (!tab.url) {
+    throw new Error('The active tab does not expose a readable URL yet.');
+  }
+
+  const protocol = new URL(tab.url).protocol;
+
+  if (protocol !== 'http:' && protocol !== 'https:') {
+    throw new Error('Rockitt can only inspect normal http or https web pages.');
+  }
+
+  return tab;
+};
+
+const readInjectedResult = <T,>(value: unknown) => {
+  if (!isObject(value)) {
+    throw new Error('The current page returned an unexpected context payload.');
+  }
+
+  return value as T;
+};
+
+const executePageContextExtraction = async (
+  input: PageContextExtractionInput,
+): Promise<ReadablePageContextSnapshot | VisiblePageContextSnapshot> => {
+  const tab = await getActiveWebTab();
+
+  try {
+    const [injectionResult] = await chrome.scripting.executeScript({
+      args: [input],
+      func: extractPageContextFromDocument,
+      target: {
+        tabId: tab.id,
+      },
+    });
+
+    if (!injectionResult) {
+      throw new Error('The current page did not return any context.');
+    }
+
+    return readInjectedResult<
+      ReadablePageContextSnapshot | VisiblePageContextSnapshot
+    >(injectionResult.result);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+
+    if (
+      /Cannot access contents of url|cannot be scripted|Missing host permission|extensions gallery/i.test(
+        message,
+      )
+    ) {
+      throw new Error(
+        'Rockitt cannot inspect this page. Open a normal website tab and try again.',
+      );
+    }
+
+    if (/Frame with ID .* was removed/i.test(message)) {
+      throw new Error('The page changed while Rockitt was reading it. Try again.');
+    }
+
+    throw error;
+  }
+};
+
+const executeVisiblePageContext = async (
+  _parameters: unknown,
+): Promise<VisiblePageContextToolResult> => {
+  const snapshot = await executePageContextExtraction({
+    kind: 'visible',
+  });
+
+  return {
+    ...(snapshot as VisiblePageContextSnapshot),
+    capturedAt: new Date().toISOString(),
+    tool: pageContextToolNames.visible,
+  };
+};
+
+const executeReadablePageContext = async (
+  parameters: unknown,
+): Promise<ReadablePageContextToolResult> => {
+  const snapshot = await executePageContextExtraction({
+    kind: 'readable',
+    ...parsePageContextReadableParameters(parameters),
+  });
+
+  return {
+    ...(snapshot as ReadablePageContextSnapshot),
+    capturedAt: new Date().toISOString(),
+    tool: pageContextToolNames.readable,
+  };
+};
+
 const ensureVoiceAgent = async (apiKey: string) => {
   const storedAgent = await loadStoredVoiceAgent();
 
@@ -940,11 +1071,43 @@ const handleFirecrawlMessage = async (
   }
 };
 
+const handlePageContextMessage = async (
+  message: PageContextBackgroundMessage,
+): Promise<PageContextBackgroundResponse> => {
+  switch (message.type) {
+    case 'page-context:get-visible':
+      return {
+        ok: true,
+        result: await executeVisiblePageContext(message.parameters),
+      };
+    case 'page-context:get-readable':
+      return {
+        ok: true,
+        result: await executeReadablePageContext(message.parameters),
+      };
+    default:
+      return {
+        ok: false,
+        error: 'Unsupported page context message.',
+      };
+  }
+};
+
 const toFirecrawlErrorResponse = async (
   error: unknown,
 ): Promise<FirecrawlBackgroundResponse> => ({
   ok: false,
   error: error instanceof Error ? error.message : 'Unknown Firecrawl error occurred.',
+});
+
+const toPageContextErrorResponse = async (
+  error: unknown,
+): Promise<PageContextBackgroundResponse> => ({
+  ok: false,
+  error:
+    error instanceof Error
+      ? error.message
+      : 'Unknown page context error occurred.',
 });
 
 export default defineBackground(() => {
@@ -996,6 +1159,16 @@ export default defineBackground(() => {
         .then(sendResponse)
         .catch(async (error) => {
           sendResponse(await toFirecrawlErrorResponse(error));
+        });
+
+      return true;
+    }
+
+    if (message.type.startsWith('page-context:')) {
+      void handlePageContextMessage(message as PageContextBackgroundMessage)
+        .then(sendResponse)
+        .catch(async (error) => {
+          sendResponse(await toPageContextErrorResponse(error));
         });
 
       return true;
