@@ -49,6 +49,11 @@ const maxFirecrawlScrapeMarkdownChars = 12_000;
 const backendHealthCacheTtlMs = 30_000;
 const backendInstallIdStorageKey = 'rockitt.install-id';
 const localUsageTimestampsStorageKey = 'rockitt.usage.user-message-timestamps.v1';
+const localUsageOverrideUnlockedAtStorageKey =
+  'rockitt.usage.override-unlocked-at.v1';
+const usageOverrideHashSalt = 'rockitt-access:v1:';
+const usageOverrideHash =
+  '36ac0ca03bf241171cb571e0dee0b1b1bd79ed60beece2a11440c472fef464ac';
 const firecrawlSearchModes: FirecrawlSearchMode[] = [
   'web',
   'news',
@@ -166,6 +171,9 @@ const isObject = (value: unknown): value is Record<string, unknown> =>
 
 const isFiniteNumber = (value: unknown): value is number =>
   typeof value === 'number' && Number.isFinite(value);
+
+const isNonEmptyString = (value: unknown): value is string =>
+  typeof value === 'string' && value.trim().length > 0;
 
 const readStringField = (value: unknown, key: string) => {
   if (!isObject(value)) {
@@ -423,6 +431,43 @@ const areNumberArraysEqual = (left: number[], right: number[]) =>
   left.length === right.length &&
   left.every((value, index) => value === right[index]);
 
+const normalizeUsageOverrideCode = (value: string) =>
+  value.trim().toUpperCase().replace(/[\s-]+/g, '');
+
+const toHex = (buffer: ArrayBuffer) =>
+  Array.from(new Uint8Array(buffer))
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('');
+
+const sha256Hex = async (value: string) => {
+  const encoded = new TextEncoder().encode(value);
+  const digest = await crypto.subtle.digest('SHA-256', encoded);
+  return toHex(digest);
+};
+
+const getUsageOverrideUnlockedAt = (value: unknown) => {
+  if (!isNonEmptyString(value)) {
+    return null;
+  }
+
+  return Number.isNaN(Date.parse(value)) ? null : value;
+};
+
+const createUnlimitedUsageState = (
+  overrideUnlockedAt: string,
+  now = Date.now(),
+): UsageState => ({
+  allowed: true,
+  checkedAt: new Date(now).toISOString(),
+  isOverrideUnlocked: true,
+  limit: usageMessageLimit,
+  overrideUnlockedAt,
+  remaining: usageMessageLimit,
+  resetsAt: null,
+  used: 0,
+  windowKind: 'rolling-24h',
+});
+
 const normalizeUsageTimestamps = (value: unknown, now = Date.now()) => {
   if (!Array.isArray(value)) {
     return [];
@@ -437,14 +482,28 @@ const normalizeUsageTimestamps = (value: unknown, now = Date.now()) => {
     .sort((left, right) => left - right);
 };
 
-const toUsageState = (timestamps: number[], now = Date.now()): UsageState => {
+const toUsageState = (
+  timestamps: number[],
+  options?: {
+    now?: number;
+    overrideUnlockedAt?: string | null;
+  },
+): UsageState => {
+  const now = options?.now ?? Date.now();
+
+  if (options?.overrideUnlockedAt) {
+    return createUnlimitedUsageState(options.overrideUnlockedAt, now);
+  }
+
   const used = timestamps.length;
   const remaining = Math.max(0, usageMessageLimit - used);
 
   return {
     allowed: remaining > 0,
     checkedAt: new Date(now).toISOString(),
+    isOverrideUnlocked: false,
     limit: usageMessageLimit,
+    overrideUnlockedAt: null,
     remaining,
     resetsAt:
       timestamps.length > 0
@@ -460,8 +519,14 @@ const createUsageLimitErrorMessage = (usage: UsageState) =>
     ? `This temporary trial allows ${String(usage.limit)} user messages per rolling 24 hours. Try again after ${new Date(usage.resetsAt).toLocaleString()}.`
     : `This temporary trial allows ${String(usage.limit)} user messages per rolling 24 hours. Try again after the current window resets.`;
 
-const getStoredUsageTimestamps = async (now = Date.now()) => {
-  const stored = await chrome.storage.local.get(localUsageTimestampsStorageKey);
+const getUsageSnapshot = async (now = Date.now()) => {
+  const stored = await chrome.storage.local.get([
+    localUsageOverrideUnlockedAtStorageKey,
+    localUsageTimestampsStorageKey,
+  ]);
+  const overrideUnlockedAt = getUsageOverrideUnlockedAt(
+    stored[localUsageOverrideUnlockedAtStorageKey],
+  );
   const rawValue = stored[localUsageTimestampsStorageKey];
   const normalized = normalizeUsageTimestamps(rawValue, now);
   const current = Array.isArray(rawValue)
@@ -474,19 +539,36 @@ const getStoredUsageTimestamps = async (now = Date.now()) => {
     });
   }
 
-  return normalized;
+  return {
+    overrideUnlockedAt,
+    timestamps: normalized,
+  };
 };
 
 const loadUsageState = async (): Promise<UsageState> => {
   const now = Date.now();
-  const timestamps = await getStoredUsageTimestamps(now);
-  return toUsageState(timestamps, now);
+  const snapshot = await getUsageSnapshot(now);
+
+  return toUsageState(snapshot.timestamps, {
+    now,
+    overrideUnlockedAt: snapshot.overrideUnlockedAt,
+  });
 };
 
 const consumeUserMessageUsage = async (): Promise<UsageBackgroundResponse> => {
   const now = Date.now();
-  const timestamps = await getStoredUsageTimestamps(now);
-  const currentUsage = toUsageState(timestamps, now);
+  const snapshot = await getUsageSnapshot(now);
+  const currentUsage = toUsageState(snapshot.timestamps, {
+    now,
+    overrideUnlockedAt: snapshot.overrideUnlockedAt,
+  });
+
+  if (snapshot.overrideUnlockedAt) {
+    return {
+      ok: true,
+      usage: currentUsage,
+    };
+  }
 
   if (!currentUsage.allowed) {
     return {
@@ -496,14 +578,64 @@ const consumeUserMessageUsage = async (): Promise<UsageBackgroundResponse> => {
     };
   }
 
-  const nextTimestamps = [...timestamps, now];
+  const nextTimestamps = [...snapshot.timestamps, now];
   await chrome.storage.local.set({
     [localUsageTimestampsStorageKey]: nextTimestamps,
   });
 
   return {
     ok: true,
-    usage: toUsageState(nextTimestamps, now),
+    usage: toUsageState(nextTimestamps, {
+      now,
+      overrideUnlockedAt: null,
+    }),
+  };
+};
+
+const unlockUsageOverride = async (
+  code: string,
+): Promise<UsageBackgroundResponse> => {
+  const normalizedCode = normalizeUsageOverrideCode(code);
+
+  if (!normalizedCode) {
+    return {
+      ok: false,
+      error: 'Enter the access code to unlock unlimited usage on this browser profile.',
+      usage: await loadUsageState(),
+    };
+  }
+
+  const digest = await sha256Hex(`${usageOverrideHashSalt}${normalizedCode}`);
+
+  if (digest !== usageOverrideHash) {
+    return {
+      ok: false,
+      error: 'That access code is not recognized.',
+      usage: await loadUsageState(),
+    };
+  }
+
+  const unlockedAt = new Date().toISOString();
+  await chrome.storage.local.set({
+    [localUsageOverrideUnlockedAtStorageKey]: unlockedAt,
+    [localUsageTimestampsStorageKey]: [],
+  });
+
+  return {
+    ok: true,
+    usage: createUnlimitedUsageState(unlockedAt),
+  };
+};
+
+const clearUsageOverride = async (): Promise<UsageBackgroundResponse> => {
+  await chrome.storage.local.remove(localUsageOverrideUnlockedAtStorageKey);
+  await chrome.storage.local.set({
+    [localUsageTimestampsStorageKey]: [],
+  });
+
+  return {
+    ok: true,
+    usage: await loadUsageState(),
   };
 };
 
@@ -1010,6 +1142,10 @@ const handleUsageMessage = async (
       };
     case 'usage:consume-user-message':
       return consumeUserMessageUsage();
+    case 'usage:unlock-override':
+      return unlockUsageOverride(message.code);
+    case 'usage:clear-override':
+      return clearUsageOverride();
     default:
       return {
         ok: false,

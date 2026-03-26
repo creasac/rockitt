@@ -24,6 +24,7 @@ type SettingsSheetProps = {
   requestError: string | null;
   requestNotice: string | null;
   serviceState: ServiceStatusMap;
+  usageOverridePanel?: ReactNode;
 };
 
 const services = Object.keys(serviceCatalog) as ServiceId[];
@@ -62,6 +63,7 @@ export function SettingsSheet({
   requestError,
   requestNotice,
   serviceState,
+  usageOverridePanel,
 }: SettingsSheetProps) {
   return (
     <aside aria-label="Settings" className="settings-sheet">
@@ -148,6 +150,8 @@ export function SettingsSheet({
           );
         })}
       </div>
+
+      {usageOverridePanel}
 
       <section className="settings-section">
         <div className="settings-section__header">

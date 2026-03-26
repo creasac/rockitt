@@ -1,5 +1,5 @@
 import { useConversation } from '@elevenlabs/react';
-import { Settings2 } from 'lucide-react';
+import { CircleAlert, KeyRound, Settings2, ShieldCheck } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 
 import { ConversationView } from '../../components/ConversationView';
@@ -137,9 +137,9 @@ const pluralize = (count: number, singular: string, plural = `${singular}s`) =>
 const normalizeUserMessageForQuota = (value: string) =>
   value.trim().replace(/\s+/g, ' ');
 
-const formatUsageResetAt = (value: string | null) => {
+const formatUsageMoment = (value: string | null) => {
   if (!value) {
-    return 'when the current 24-hour window resets';
+    return null;
   }
 
   return new Intl.DateTimeFormat(undefined, {
@@ -150,10 +150,21 @@ const formatUsageResetAt = (value: string | null) => {
   }).format(new Date(value));
 };
 
+const formatUsageResetAt = (value: string | null) =>
+  formatUsageMoment(value) ?? 'when the current 24-hour window resets';
+
 const getUsageBlockedMessage = (usage: UsageState) =>
   `This temporary trial allows ${String(usage.limit)} user ${pluralize(usage.limit, 'message')} per rolling 24 hours. Try again after ${formatUsageResetAt(usage.resetsAt)}.`;
 
 const getUsageDetailCopy = (usage: UsageState) => {
+  if (usage.isOverrideUnlocked) {
+    const unlockedAtLabel = formatUsageMoment(usage.overrideUnlockedAt);
+
+    return unlockedAtLabel
+      ? `Unlimited access enabled on this browser profile. Unlocked ${unlockedAtLabel}.`
+      : 'Unlimited access enabled on this browser profile.';
+  }
+
   if (!usage.allowed) {
     return `Trial limit reached. ${String(usage.used)} of ${String(usage.limit)} used. Try again after ${formatUsageResetAt(usage.resetsAt)}.`;
   }
@@ -677,12 +688,15 @@ export function App() {
   const [requestNotice, setRequestNotice] = useState<string | null>(null);
   const [serviceState, setServiceState] =
     useState<ServiceStatusMap>(createEmptyServiceState());
+  const [usageOverrideCode, setUsageOverrideCode] = useState('');
   const [usageState, setUsageState] = useState<UsageState>(
     createInitialUsageState(),
   );
   const [voiceRuntime, setVoiceRuntime] = useState<ElevenLabsVoiceRuntimeState>(
     createEmptyVoiceRuntimeState(),
   );
+  const [isClearingUsageOverride, setIsClearingUsageOverride] = useState(false);
+  const [isUnlockingUsageOverride, setIsUnlockingUsageOverride] = useState(false);
   const pendingTypedUserMessagesRef = useRef<string[]>([]);
   const shouldEndSessionForUsageRef = useRef(false);
   const pendingClientToolIdsRef = useRef<Record<string, string[]>>({});
@@ -770,6 +784,73 @@ export function App() {
     }
 
     return response.usage;
+  };
+
+  const unlockUsageOverride = async () => {
+    setIsUnlockingUsageOverride(true);
+
+    try {
+      const response = await sendUsageMessage({
+        code: usageOverrideCode,
+        type: 'usage:unlock-override',
+      });
+
+      if (response.usage) {
+        setUsageState(response.usage);
+      }
+
+      if (!response.ok) {
+        throw new Error(response.error);
+      }
+
+      shouldEndSessionForUsageRef.current = false;
+      pendingTypedUserMessagesRef.current = [];
+      setUsageOverrideCode('');
+      setRequestError(null);
+      setRequestNotice('Unlimited access enabled on this browser profile.');
+    } catch (error) {
+      setRequestError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to unlock unlimited access on this browser profile.',
+      );
+    } finally {
+      setIsUnlockingUsageOverride(false);
+    }
+  };
+
+  const clearUsageOverride = async () => {
+    setIsClearingUsageOverride(true);
+
+    try {
+      const response = await sendUsageMessage({
+        type: 'usage:clear-override',
+      });
+
+      if (response.usage) {
+        setUsageState(response.usage);
+      }
+
+      if (!response.ok) {
+        throw new Error(response.error);
+      }
+
+      shouldEndSessionForUsageRef.current = false;
+      pendingTypedUserMessagesRef.current = [];
+      setUsageOverrideCode('');
+      setRequestError(null);
+      setRequestNotice(
+        'Unlimited access removed. The local trial limit is active again.',
+      );
+    } catch (error) {
+      setRequestError(
+        error instanceof Error
+          ? error.message
+          : 'Unable to remove unlimited access on this browser profile.',
+      );
+    } finally {
+      setIsClearingUsageOverride(false);
+    }
   };
 
   const applyPostMessageUsage = (nextUsage: UsageState) => {
@@ -1832,6 +1913,111 @@ export function App() {
       value: pageContextMeta,
     },
   ];
+  const usageOverridePanel = (
+    <section className="settings-section">
+      <div className="settings-section__header">
+        <div>
+          <p className="settings-section__title">Access override</p>
+          <p className="settings-section__copy">
+            Unlock unlimited local usage on this browser profile.
+          </p>
+        </div>
+      </div>
+
+      <section className="provider-card">
+        <div className="provider-card__top">
+          <div>
+            <p className="provider-card__label">Unlimited access</p>
+            <p className="provider-card__description">
+              Stored locally only. This does not touch the backend.
+            </p>
+          </div>
+
+          <span
+            className={`provider-chip${
+              usageState.isOverrideUnlocked ? ' provider-chip--ready' : ''
+            }`}
+          >
+            {usageState.isOverrideUnlocked ? 'Unlocked' : 'Locked'}
+          </span>
+        </div>
+
+        <div
+          className={`provider-card__validation provider-card__validation--${
+            usageState.isOverrideUnlocked ? 'success' : 'error'
+          }`}
+        >
+          {usageState.isOverrideUnlocked ? (
+            <ShieldCheck size={15} />
+          ) : (
+            <CircleAlert size={15} />
+          )}
+
+          <div>
+            <p className="provider-card__validation-title">
+              {usageState.isOverrideUnlocked
+                ? 'Unlimited local usage is enabled.'
+                : 'Enter the access code to bypass the temporary local limit.'}
+            </p>
+            <p className="provider-card__validation-copy">
+              {getUsageDetailCopy(usageState)}
+            </p>
+          </div>
+        </div>
+
+        {usageState.isOverrideUnlocked ? (
+          <div className="provider-card__actions">
+            <button
+              className="action-button action-button--danger"
+              disabled={isClearingUsageOverride}
+              type="button"
+              onClick={() => {
+                void clearUsageOverride();
+              }}
+            >
+              {isClearingUsageOverride ? 'Removing' : 'Remove override'}
+            </button>
+          </div>
+        ) : (
+          <>
+            <label className="provider-card__meta">
+              <span className="provider-card__input-label">Access code</span>
+              <span className="provider-card__input-wrap">
+                <KeyRound className="provider-card__input-icon" size={15} />
+                <input
+                  autoCapitalize="off"
+                  autoComplete="off"
+                  autoCorrect="off"
+                  className="provider-card__input"
+                  inputMode="text"
+                  placeholder="Enter access code"
+                  spellCheck={false}
+                  type="password"
+                  value={usageOverrideCode}
+                  onChange={(event) => {
+                    setUsageOverrideCode(event.target.value);
+                  }}
+                />
+              </span>
+            </label>
+
+            <div className="provider-card__actions">
+              <button
+                className="action-button"
+                disabled={!usageOverrideCode.trim() || isUnlockingUsageOverride}
+                type="button"
+                onClick={() => {
+                  void unlockUsageOverride();
+                }}
+              >
+                {isUnlockingUsageOverride ? 'Unlocking' : 'Unlock access'}
+              </button>
+            </div>
+          </>
+        )}
+      </section>
+    </section>
+  );
 
   return (
     <div className="app-frame">
@@ -1972,6 +2158,7 @@ export function App() {
               requestNotice={requestNotice}
               onClose={() => setIsSettingsOpen(false)}
               serviceState={serviceState}
+              usageOverridePanel={usageOverridePanel}
             />
           </>
         ) : null}
