@@ -21,8 +21,45 @@ import {
   type ElevenLabsBackgroundResponse,
   type StoredElevenLabsVoiceAgent,
 } from '../lib/voice-agent';
+import {
+  firecrawlToolNames,
+  type FirecrawlBackgroundMessage,
+  type FirecrawlBackgroundResponse,
+  type FirecrawlResultItem,
+  type FirecrawlScrapeToolResult,
+  type FirecrawlSearchMode,
+  type FirecrawlSearchTimeRange,
+  type FirecrawlSearchToolResult,
+} from '../lib/firecrawl';
 
 const elevenLabsApiBaseUrl = 'https://api.elevenlabs.io/v1';
+const firecrawlApiBaseUrl = 'https://api.firecrawl.dev/v2';
+const maxFirecrawlResultCount = 5;
+const maxFirecrawlScrapeMarkdownChars = 6_000;
+const firecrawlSearchModes: FirecrawlSearchMode[] = [
+  'web',
+  'news',
+  'web-and-news',
+];
+const firecrawlTimeRanges: FirecrawlSearchTimeRange[] = [
+  'any',
+  'past-hour',
+  'past-day',
+  'past-week',
+  'past-month',
+  'past-year',
+  'newest',
+];
+const firecrawlTimeRangeToTbs: Partial<
+  Record<FirecrawlSearchTimeRange, string>
+> = {
+  newest: 'sbd:1',
+  'past-day': 'qdr:d',
+  'past-hour': 'qdr:h',
+  'past-month': 'qdr:m',
+  'past-week': 'qdr:w',
+  'past-year': 'qdr:y',
+};
 
 const toDebugDetails = (details: unknown) => {
   if (details == null) {
@@ -369,7 +406,131 @@ const readStringField = (value: unknown, key: string) => {
   return typeof nextValue === 'string' ? nextValue : null;
 };
 
-const extractAgentId = (value: unknown) =>
+const readNumberField = (value: unknown, key: string) => {
+  if (!isObject(value)) {
+    return null;
+  }
+
+  const nextValue = value[key];
+
+  return typeof nextValue === 'number' && Number.isFinite(nextValue)
+    ? nextValue
+    : null;
+};
+
+const clamp = (value: number, min: number, max: number) =>
+  Math.min(max, Math.max(min, value));
+
+const normalizeToolText = (value: string, maxChars: number) => {
+  const normalized = value
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+
+  if (normalized.length <= maxChars) {
+    return {
+      text: normalized,
+      truncated: false,
+    };
+  }
+
+  return {
+    text: `${normalized.slice(0, maxChars).trimEnd()}...`,
+    truncated: true,
+  };
+};
+
+const normalizePublicUrl = (value: string) => {
+  const url = new URL(value.trim());
+
+  if (url.protocol !== 'http:' && url.protocol !== 'https:') {
+    throw new Error('Firecrawl can only fetch public http or https URLs.');
+  }
+
+  return url.toString();
+};
+
+const parseFirecrawlSearchParameters = (value: unknown) => {
+  const query = readStringField(value, 'query')?.trim();
+
+  if (!query) {
+    throw new Error('Firecrawl search requires a query string.');
+  }
+
+  const modeValue = readStringField(value, 'mode');
+  const timeRangeValue = readStringField(value, 'timeRange');
+  const limitValue = readNumberField(value, 'limit');
+
+  const mode = firecrawlSearchModes.includes(modeValue as FirecrawlSearchMode)
+    ? (modeValue as FirecrawlSearchMode)
+    : 'web';
+  const timeRange = firecrawlTimeRanges.includes(
+    timeRangeValue as FirecrawlSearchTimeRange,
+  )
+    ? (timeRangeValue as FirecrawlSearchTimeRange)
+    : 'any';
+  const limit = clamp(
+    Math.trunc(limitValue ?? 3),
+    1,
+    maxFirecrawlResultCount,
+  );
+
+  return {
+    limit,
+    mode,
+    query,
+    timeRange,
+  };
+};
+
+const parseFirecrawlScrapeParameters = (value: unknown) => {
+  const url = readStringField(value, 'url')?.trim();
+
+  if (!url) {
+    throw new Error('Firecrawl scrape requires a URL.');
+  }
+
+  return {
+    url: normalizePublicUrl(url),
+  };
+};
+
+const normalizeFirecrawlResultItems = (
+  value: unknown,
+  source: FirecrawlResultItem['source'],
+) => {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+
+  return value.flatMap((item): FirecrawlResultItem[] => {
+    if (!isObject(item)) {
+      return [];
+    }
+
+    const url = readStringField(item, 'url');
+
+    if (!url) {
+      return [];
+    }
+
+    return [
+      {
+        category: readStringField(item, 'category'),
+        date: readStringField(item, 'date'),
+        position: readNumberField(item, 'position'),
+        snippet:
+          readStringField(item, 'snippet') ??
+          readStringField(item, 'description'),
+        source,
+        title: readStringField(item, 'title') ?? url,
+        url,
+      },
+    ];
+  });
+};
+
+const extractAgentId = (value: unknown): string | null =>
   readStringField(value, 'agent_id') ??
   readStringField(value, 'agentId') ??
   (isObject(value) ? extractAgentId(value.agent) : null);
@@ -399,6 +560,7 @@ const createElevenLabsAgent = async (
             llm: elevenLabsVoiceDefaults.llm,
             max_tokens: elevenLabsVoiceDefaults.maxTokens,
             temperature: elevenLabsVoiceDefaults.temperature,
+            tools: elevenLabsVoiceDefaults.tools,
           },
         },
         conversation: {
@@ -483,6 +645,123 @@ const requestConversationToken = async (apiKey: string, agentId: string) => {
   }
 
   return conversationToken;
+};
+
+const executeFirecrawlSearch = async (
+  parameters: unknown,
+): Promise<FirecrawlSearchToolResult> => {
+  const apiKey = await getStoredProviderApiKey('firecrawl');
+  const { limit, mode, query, timeRange } =
+    parseFirecrawlSearchParameters(parameters);
+  const sources =
+    mode === 'web-and-news' ? ['web', 'news'] : [mode];
+  const tbs =
+    mode === 'news' ? undefined : firecrawlTimeRangeToTbs[timeRange];
+  const response = await fetch(`${firecrawlApiBaseUrl}/search`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      limit,
+      query,
+      sources,
+      ...(tbs ? { tbs } : {}),
+      timeout: 15_000,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      (await readResponseMessage(response)) ??
+        `Firecrawl search failed (${response.status}).`,
+    );
+  }
+
+  const payload = (await response.json()) as unknown;
+  const data = isObject(payload) ? payload.data : null;
+  const webResults = isObject(data)
+    ? normalizeFirecrawlResultItems(data.web, 'web')
+    : [];
+  const newsResults = isObject(data)
+    ? normalizeFirecrawlResultItems(data.news, 'news')
+    : [];
+  const fallbackResults = Array.isArray(data)
+    ? normalizeFirecrawlResultItems(
+        data,
+        mode === 'news' ? 'news' : 'web',
+      )
+    : [];
+
+  return {
+    mode,
+    query,
+    results:
+      fallbackResults.length > 0
+        ? fallbackResults
+        : [...webResults, ...newsResults],
+    searchedAt: new Date().toISOString(),
+    timeRange,
+    tool: firecrawlToolNames.search,
+  };
+};
+
+const executeFirecrawlScrape = async (
+  parameters: unknown,
+): Promise<FirecrawlScrapeToolResult> => {
+  const apiKey = await getStoredProviderApiKey('firecrawl');
+  const { url } = parseFirecrawlScrapeParameters(parameters);
+  const response = await fetch(`${firecrawlApiBaseUrl}/scrape`, {
+    method: 'POST',
+    headers: {
+      Authorization: `Bearer ${apiKey}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      formats: ['markdown'],
+      maxAge: 0,
+      onlyMainContent: true,
+      timeout: 20_000,
+      url,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(
+      (await readResponseMessage(response)) ??
+        `Firecrawl scrape failed (${response.status}).`,
+    );
+  }
+
+  const payload = (await response.json()) as unknown;
+  const data = isObject(payload) ? payload.data : null;
+
+  if (!isObject(data)) {
+    throw new Error('Firecrawl returned an unexpected scrape response.');
+  }
+
+  const metadata = isObject(data.metadata) ? data.metadata : null;
+  const markdown =
+    readStringField(data, 'markdown') ??
+    readStringField(data, 'content') ??
+    '';
+  const normalizedMarkdown = normalizeToolText(
+    markdown || 'No markdown content returned.',
+    maxFirecrawlScrapeMarkdownChars,
+  );
+
+  return {
+    description: readStringField(metadata, 'description'),
+    fetchedAt: new Date().toISOString(),
+    markdown: normalizedMarkdown.text,
+    sourceURL: readStringField(metadata, 'sourceURL') ?? url,
+    statusCode: readNumberField(metadata, 'statusCode'),
+    title: readStringField(metadata, 'title'),
+    tool: firecrawlToolNames.scrape,
+    truncated: normalizedMarkdown.truncated,
+    url,
+  };
 };
 
 const ensureVoiceAgent = async (apiKey: string) => {
@@ -639,6 +918,35 @@ const handleVoiceMessage = async (
   }
 };
 
+const handleFirecrawlMessage = async (
+  message: FirecrawlBackgroundMessage,
+): Promise<FirecrawlBackgroundResponse> => {
+  switch (message.type) {
+    case 'firecrawl:search':
+      return {
+        ok: true,
+        result: await executeFirecrawlSearch(message.parameters),
+      };
+    case 'firecrawl:scrape':
+      return {
+        ok: true,
+        result: await executeFirecrawlScrape(message.parameters),
+      };
+    default:
+      return {
+        ok: false,
+        error: 'Unsupported Firecrawl message.',
+      };
+  }
+};
+
+const toFirecrawlErrorResponse = async (
+  error: unknown,
+): Promise<FirecrawlBackgroundResponse> => ({
+  ok: false,
+  error: error instanceof Error ? error.message : 'Unknown Firecrawl error occurred.',
+});
+
 export default defineBackground(() => {
   void enableActionOpen();
   void restrictStorageAccess();
@@ -678,6 +986,16 @@ export default defineBackground(() => {
         .then(sendResponse)
         .catch(async (error) => {
           sendResponse(await toVoiceErrorResponse(error));
+        });
+
+      return true;
+    }
+
+    if (message.type.startsWith('firecrawl:')) {
+      void handleFirecrawlMessage(message as FirecrawlBackgroundMessage)
+        .then(sendResponse)
+        .catch(async (error) => {
+          sendResponse(await toFirecrawlErrorResponse(error));
         });
 
       return true;

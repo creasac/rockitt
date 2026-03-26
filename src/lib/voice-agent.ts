@@ -1,6 +1,8 @@
+import { elevenLabsFirecrawlTools } from './firecrawl';
+
 export const elevenLabsVoiceDefaults = {
   agentName: 'rockitt voice',
-  configVersion: 2,
+  configVersion: 3,
   llm: 'gemini-2.0-flash',
   maxDurationSeconds: 600,
   maxTokens: 120,
@@ -11,7 +13,10 @@ export const elevenLabsVoiceDefaults = {
     'Ask at most one short follow-up question when needed.',
     'Do not use markdown or long lists in voice responses.',
     'If you are unsure, say so directly instead of guessing.',
-    "If the user asks about live web or page-specific information, explain that browsing and page grounding are not connected yet.",
+    'When freshness matters, such as news, prices, releases, changing facts, or anything happening right now, use the Firecrawl search tool before answering.',
+    'When the user provides a URL or asks you to inspect a specific web page, use the Firecrawl scrape tool with that URL before answering.',
+    'Do not claim you checked the web unless you actually used a Firecrawl tool in this turn.',
+    'If a Firecrawl tool fails, say live web lookup is unavailable right now and answer cautiously.',
   ].join(' '),
   temperature: 0.2,
   ttsModelId: 'eleven_flash_v2',
@@ -19,6 +24,7 @@ export const elevenLabsVoiceDefaults = {
   turnTimeout: 6,
   voiceId: 'EXAVITQu4vr4xnSDxMaL',
   voiceLabel: 'Sarah',
+  tools: elevenLabsFirecrawlTools,
 } as const;
 
 export const voiceStorageKeys = {

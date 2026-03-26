@@ -6,9 +6,11 @@ import { ConversationView } from '../../components/ConversationView';
 import { SettingsSheet } from '../../components/SettingsSheet';
 import { VoiceOrb } from '../../components/VoiceOrb';
 import {
+  sendFirecrawlMessage,
   sendProviderMessage,
   sendVoiceMessage,
 } from '../../lib/background-client';
+import { firecrawlToolNames } from '../../lib/firecrawl';
 import {
   voiceStates,
   type PanelMode,
@@ -49,6 +51,11 @@ const elevenLabsWorkletPaths = {
   ),
   rawAudioProcessor: chrome.runtime.getURL('elevenlabs/rawAudioProcessor.js'),
 };
+
+const firecrawlToolStatusCopy = {
+  [firecrawlToolNames.scrape]: 'Fetching a live web page with Firecrawl.',
+  [firecrawlToolNames.search]: 'Checking the live web with Firecrawl.',
+} as const;
 
 const isDomException = (value: unknown): value is DOMException =>
   value instanceof DOMException;
@@ -159,6 +166,38 @@ export function App() {
   );
 
   const conversation = useConversation({
+    clientTools: {
+      [firecrawlToolNames.search]: async (parameters) => {
+        setRequestError(null);
+        setRequestNotice(firecrawlToolStatusCopy[firecrawlToolNames.search]);
+
+        const response = await sendFirecrawlMessage({
+          type: 'firecrawl:search',
+          parameters,
+        });
+
+        if (!response.ok) {
+          throw new Error(response.error);
+        }
+
+        return JSON.stringify(response.result);
+      },
+      [firecrawlToolNames.scrape]: async (parameters) => {
+        setRequestError(null);
+        setRequestNotice(firecrawlToolStatusCopy[firecrawlToolNames.scrape]);
+
+        const response = await sendFirecrawlMessage({
+          type: 'firecrawl:scrape',
+          parameters,
+        });
+
+        if (!response.ok) {
+          throw new Error(response.error);
+        }
+
+        return JSON.stringify(response.result);
+      },
+    },
     connectionDelay: {
       android: 750,
       default: 0,
@@ -185,6 +224,20 @@ export function App() {
     onError: (message) => {
       setIsAwaitingReply(false);
       setRequestError(message);
+    },
+    onAgentToolResponse: ({ is_error, tool_name }) => {
+      if (
+        tool_name !== firecrawlToolNames.search &&
+        tool_name !== firecrawlToolNames.scrape
+      ) {
+        return;
+      }
+
+      if (is_error) {
+        return;
+      }
+
+      setRequestNotice('Live web lookup complete.');
     },
     onMessage: ({ event_id, message, role }) => {
       setMessages((currentMessages) =>
@@ -686,6 +739,9 @@ export function App() {
     ? `${voiceRuntime.agent.llm} / ${voiceRuntime.agent.voiceLabel} / aggressive cost profile`
     : 'Automatic agent provisioning on first connect.';
   const microphoneMeta = `Mic permission: ${microphoneState}`;
+  const liveWebMeta = providerState.firecrawl.hasKey
+    ? 'Live web lookup ready via Firecrawl.'
+    : 'Add a Firecrawl key to enable live web lookup.';
 
   return (
     <div className="app-frame">
@@ -728,6 +784,7 @@ export function App() {
                 <p className="voice-view__hint">{voiceHint}</p>
                 <p className="voice-view__meta">{voiceMeta}</p>
                 <p className="voice-view__meta">{microphoneMeta}</p>
+                <p className="voice-view__meta">{liveWebMeta}</p>
 
                 {requestNotice ? (
                   <div className="inline-banner inline-banner--notice" role="status">
