@@ -177,7 +177,7 @@ button {
 
 .voice-view {
   display: grid;
-  grid-template-rows: auto 1fr auto;
+  grid-template-rows: 1fr auto;
   align-items: center;
   justify-items: center;
   gap: 1rem;
@@ -436,6 +436,13 @@ button {
   padding: 0.95rem 1rem 0;
 }
 
+.chat-shell__status {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  letter-spacing: -0.02em;
+}
+
 .chat-feed {
   display: flex;
   flex-direction: column;
@@ -528,11 +535,13 @@ button {
 .chat-empty {
   display: flex;
   flex-direction: column;
+  align-items: center;
   gap: 0.35rem;
   padding: 1rem 1.05rem;
   border: 1px dashed rgba(243, 238, 227, 0.12);
   border-radius: 1.2rem;
   background: var(--surface-muted);
+  text-align: center;
 }
 
 .chat-empty__title,

@@ -1,10 +1,9 @@
-import { LoaderCircle, Send } from 'lucide-react';
+import { Send } from 'lucide-react';
 
 import { RockittPageToggle } from './RockittPageToggle';
 
 type ChatMessage = {
   id: string;
-  meta?: string;
   role: 'assistant' | 'tool' | 'user';
   status?: 'error' | 'running' | 'success';
   text: string;
@@ -18,6 +17,7 @@ type ConversationViewProps = {
   onBackToVoice: () => void;
   onChangeDraft: (value: string) => void;
   onSubmit: () => void;
+  statusText: string;
 };
 
 export function ConversationView({
@@ -28,7 +28,12 @@ export function ConversationView({
   onBackToVoice,
   onChangeDraft,
   onSubmit,
+  statusText,
 }: ConversationViewProps) {
+  const visibleMessages = messages.filter(
+    (message) => message.role !== 'tool' || message.status === 'error',
+  );
+
   return (
     <div className="chat-shell">
       <div className="chat-shell__top">
@@ -37,38 +42,22 @@ export function ConversationView({
           label="Return to voice"
           onPress={onBackToVoice}
         />
+        <p className="chat-shell__status">{statusText}</p>
       </div>
 
       <div className="chat-feed">
-        {messages.length ? (
-          messages.map((message) => (
-            <article
-              key={message.id}
-              className={`message message--${message.role}${message.status ? ` message--${message.status}` : ''}`}
-            >
-              <p className="message__text">{message.text}</p>
-              {message.meta ? (
-                <span className="message__meta">{message.meta}</span>
-              ) : null}
-            </article>
-          ))
-        ) : (
-          <article className="chat-empty">
-            <p className="chat-empty__title">No live transcript yet</p>
-            <p className="chat-empty__copy">
-              Start voice mode first, then spoken turns and typed messages will
-              land here.
-            </p>
+        {visibleMessages.map((message) => (
+          <article
+            key={message.id}
+            className={`message message--${message.role}${message.status ? ` message--${message.status}` : ''}`}
+          >
+            <p className="message__text">{message.text}</p>
           </article>
-        )}
+        ))}
 
         {isAwaitingReply ? (
           <article className="message message--assistant message--pending">
-            <p className="message__text">Rockitt is replying...</p>
-            <span className="message__meta">
-              <LoaderCircle className="spin" size={14} />
-              Live session
-            </span>
+            <p className="message__text">thinking</p>
           </article>
         ) : null}
       </div>

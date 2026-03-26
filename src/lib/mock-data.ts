@@ -16,20 +16,20 @@ export const voiceStates: Record<
   }
 > = {
   idle: {
-    label: 'Ready',
-    hint: 'Tap to begin a live voice session.',
+    label: 'tap to start live chat',
+    hint: 'tap to start live chat',
   },
   listening: {
-    label: 'Listening',
-    hint: 'The orb is active and waiting for your question.',
+    label: 'listening',
+    hint: 'listening',
   },
   thinking: {
-    label: 'Thinking',
-    hint: 'This is where the agent will reason over fetched context.',
+    label: 'thinking',
+    hint: 'thinking',
   },
   speaking: {
-    label: 'Replying',
-    hint: 'Voice answers will land here once ElevenLabs is wired in.',
+    label: 'speaking',
+    hint: 'speaking',
   },
 };
 

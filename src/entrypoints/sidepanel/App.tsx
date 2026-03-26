@@ -87,6 +87,14 @@ const knownToolTitleCopy = {
   [pageContextToolNames.visible]: 'Visible page',
 } as const;
 
+const compactToolStatusCopy = {
+  end_call: 'ending',
+  [firecrawlToolNames.scrape]: 'fetching',
+  [firecrawlToolNames.search]: 'searching',
+  [pageContextToolNames.readable]: 'reading',
+  [pageContextToolNames.visible]: 'reading',
+} as const;
+
 const debugActivityStorageKey = 'rockitt.debug-activity.v1';
 const maxDebugActivityCount = 24;
 const clientToolErrorPrefix = 'Client tool execution failed with following error: ';
@@ -271,26 +279,34 @@ const getToolResponseSummary = (
   return `${getToolTitle(toolName)} completed successfully.`;
 };
 
-const getToolMessageMeta = (
+const getCompactToolStatus = (
+  toolName: string,
   status: NonNullable<LiveChatMessage['status']>,
-  source: DebugActivity['source'],
 ) => {
-  const sourceCopy =
-    source === 'browser'
-      ? 'Browser tool'
-      : source === 'firecrawl'
-        ? 'Firecrawl tool'
-        : 'Agent tool';
-
-  if (status === 'running') {
-    return `${sourceCopy} • Running`;
-  }
-
   if (status === 'error') {
-    return `${sourceCopy} • Failed`;
+    if (toolName === firecrawlToolNames.search) {
+      return 'search failed';
+    }
+
+    if (toolName === firecrawlToolNames.scrape) {
+      return 'fetch failed';
+    }
+
+    if (
+      toolName === pageContextToolNames.visible ||
+      toolName === pageContextToolNames.readable
+    ) {
+      return 'read failed';
+    }
+
+    return 'failed';
   }
 
-  return `${sourceCopy} • Complete`;
+  if (toolName in compactToolStatusCopy) {
+    return compactToolStatusCopy[toolName as keyof typeof compactToolStatusCopy];
+  }
+
+  return 'working';
 };
 
 const normalizeConversationError = (message: string) =>
@@ -357,27 +373,6 @@ const toVoiceState = (
   }
 
   return 'listening';
-};
-
-const getVoiceHint = (
-  hasVoiceKey: boolean,
-  runtime: ElevenLabsVoiceRuntimeState,
-  voiceState: VoiceState,
-  isStartingVoice: boolean,
-) => {
-  if (!hasVoiceKey) {
-    return 'Add your ElevenLabs key in Settings to enable live voice.';
-  }
-
-  if (isStartingVoice) {
-    return 'Provisioning the low-cost voice agent and opening a live session.';
-  }
-
-  if (!runtime.ready) {
-    return 'Tap the orb to provision Rockitt\'s low-cost voice agent for this browser.';
-  }
-
-  return voiceStates[voiceState].hint;
 };
 
 const formatDisconnectError = (
@@ -500,18 +495,22 @@ export function App() {
   const setToolMessage = (
     toolCallId: string,
     toolName: string,
-    source: DebugActivity['source'],
     status: NonNullable<LiveChatMessage['status']>,
   ) => {
     setMessages((currentMessages) =>
       upsertLiveMessage(currentMessages, {
         id: `tool-${toolCallId}`,
-        meta: getToolMessageMeta(status, source),
         role: 'tool',
         status,
-        text: getToolTitle(toolName),
+        text: getCompactToolStatus(toolName, status),
         toolCallId,
       }),
+    );
+  };
+
+  const clearToolMessage = (toolCallId: string) => {
+    setMessages((currentMessages) =>
+      currentMessages.filter((message) => message.toolCallId !== toolCallId),
     );
   };
 
@@ -541,7 +540,7 @@ export function App() {
 
     toolActivityIdsRef.current[toolCallId] = activityId;
     toolSourceRef.current[toolCallId] = source;
-    setToolMessage(toolCallId, toolName, source, 'running');
+    setToolMessage(toolCallId, toolName, 'running');
 
     return activityId;
   };
@@ -603,7 +602,7 @@ export function App() {
         type: 'client',
       },
     }));
-    setToolMessage(toolCallId, toolName, source, 'running');
+    setToolMessage(toolCallId, toolName, 'running');
 
     try {
       const response = await sendFirecrawlMessage(
@@ -643,7 +642,7 @@ export function App() {
           type: 'client',
         },
       }));
-      setToolMessage(toolCallId, toolName, source, 'success');
+      clearToolMessage(toolCallId);
       setRequestNotice('Live web lookup complete.');
 
       return JSON.stringify(response.result);
@@ -668,7 +667,7 @@ export function App() {
           type: 'client',
         },
       }));
-      setToolMessage(toolCallId, toolName, source, 'error');
+      setToolMessage(toolCallId, toolName, 'error');
 
       throw new Error(nextError);
     }
@@ -699,7 +698,7 @@ export function App() {
         type: 'client',
       },
     }));
-    setToolMessage(toolCallId, toolName, source, 'running');
+    setToolMessage(toolCallId, toolName, 'running');
 
     try {
       const response = await sendPageContextMessage(
@@ -739,7 +738,7 @@ export function App() {
           type: 'client',
         },
       }));
-      setToolMessage(toolCallId, toolName, source, 'success');
+      clearToolMessage(toolCallId);
       setRequestNotice('Page context ready.');
 
       return JSON.stringify(response.result);
@@ -764,7 +763,7 @@ export function App() {
           type: 'client',
         },
       }));
-      setToolMessage(toolCallId, toolName, source, 'error');
+      setToolMessage(toolCallId, toolName, 'error');
 
       throw new Error(nextError);
     }
@@ -875,12 +874,11 @@ export function App() {
           type: tool_type,
         },
       }));
-      setToolMessage(
-        tool_call_id,
-        tool_name,
-        source,
-        is_error ? 'error' : 'success',
-      );
+      if (is_error) {
+        setToolMessage(tool_call_id, tool_name, 'error');
+      } else {
+        clearToolMessage(tool_call_id);
+      }
 
       if (!is_error && tool_name in firecrawlToolStatusCopy) {
         setRequestNotice('Live web lookup complete.');
@@ -898,7 +896,6 @@ export function App() {
             event_id == null
               ? `${role}-${Date.now()}`
               : `${role}-${String(event_id)}`,
-          meta: role === 'agent' ? 'Voice reply' : 'You',
           role: role === 'agent' ? 'assistant' : 'user',
           text: message,
         }),
@@ -1399,13 +1396,11 @@ export function App() {
     isAwaitingReply,
   );
   const stateCopy = voiceStates[voiceState];
+  const activeToolMessage = [...messages]
+    .reverse()
+    .find((message) => message.role === 'tool' && message.status === 'running');
   const hasVoiceKey = providerState.elevenlabs.hasKey;
-  const voiceHint = getVoiceHint(
-    hasVoiceKey,
-    voiceRuntime,
-    voiceState,
-    isStartingVoice,
-  );
+  const voiceHint = activeToolMessage?.text ?? (isStartingVoice ? 'thinking' : stateCopy.hint);
   const voiceMeta = voiceRuntime.agent
     ? `${voiceRuntime.agent.llm} / ${voiceRuntime.agent.voiceLabel} / aggressive cost profile`
     : 'Automatic agent provisioning on first connect.';
@@ -1461,10 +1456,6 @@ export function App() {
                 className="panel__page voice-view"
                 inert={panelMode !== 'voice'}
               >
-                <div className="voice-view__status">
-                  <span className="status-pill">{stateCopy.label}</span>
-                </div>
-
                 <VoiceOrb
                   disabled={isStartingVoice || conversation.status === 'connecting'}
                   label={
@@ -1480,12 +1471,6 @@ export function App() {
 
                 <div className="voice-view__copy">
                   <p className="voice-view__hint">{voiceHint}</p>
-
-                  {requestNotice ? (
-                    <div className="inline-banner inline-banner--notice" role="status">
-                      {requestNotice}
-                    </div>
-                  ) : null}
 
                   {requestError ? (
                     <div className="inline-banner inline-banner--error" role="alert">
@@ -1529,6 +1514,7 @@ export function App() {
                   onSubmit={() => {
                     handleChatSubmit();
                   }}
+                  statusText={voiceHint}
                 />
               </section>
             </div>
