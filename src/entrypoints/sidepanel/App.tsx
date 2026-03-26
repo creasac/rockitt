@@ -314,6 +314,121 @@ const normalizeConversationError = (message: string) =>
     ? message.slice(clientToolErrorPrefix.length)
     : message;
 
+const createLiveMessage = (
+  role: LiveChatMessage['role'],
+  text: string,
+  options?: {
+    eventId?: number;
+    meta?: string;
+    status?: LiveChatMessage['status'];
+    toolCallId?: string;
+  },
+): LiveChatMessage => ({
+  eventId: options?.eventId,
+  id:
+    options?.eventId == null
+      ? `${role}-${Date.now()}`
+      : `${role}-${String(options.eventId)}`,
+  meta: options?.meta,
+  role,
+  status: options?.status,
+  text,
+  toolCallId: options?.toolCallId,
+});
+
+type TentativeUserTranscriptDebugEvent = {
+  tentative_user_transcription_event: {
+    event_id: number;
+    user_transcript: string;
+  };
+  type: 'tentative_user_transcript';
+};
+
+type AgentResponseCorrectionDebugEvent = {
+  agent_response_correction_event: {
+    corrected_agent_response: string;
+    event_id: number;
+  };
+  type: 'agent_response_correction';
+};
+
+const isTentativeUserTranscriptDebugEvent = (
+  value: unknown,
+): value is TentativeUserTranscriptDebugEvent => {
+  if (!isRecord(value) || value.type !== 'tentative_user_transcript') {
+    return false;
+  }
+
+  const event = value.tentative_user_transcription_event;
+
+  return (
+    isRecord(event) &&
+    typeof event.event_id === 'number' &&
+    typeof event.user_transcript === 'string'
+  );
+};
+
+const isAgentResponseCorrectionDebugEvent = (
+  value: unknown,
+): value is AgentResponseCorrectionDebugEvent => {
+  if (!isRecord(value) || value.type !== 'agent_response_correction') {
+    return false;
+  }
+
+  const event = value.agent_response_correction_event;
+
+  return (
+    isRecord(event) &&
+    typeof event.event_id === 'number' &&
+    typeof event.corrected_agent_response === 'string'
+  );
+};
+
+const findLastMatchingMessageIndex = (
+  messages: LiveChatMessage[],
+  predicate: (message: LiveChatMessage) => boolean,
+) => {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (predicate(messages[index])) {
+      return index;
+    }
+  }
+
+  return -1;
+};
+
+const getEventMessageInsertIndex = (
+  messages: LiveChatMessage[],
+  nextMessage: LiveChatMessage,
+) => {
+  if (nextMessage.eventId == null) {
+    return messages.length;
+  }
+
+  const sameEventMessages = messages
+    .map((message, index) => ({ index, message }))
+    .filter(
+      ({ message }) =>
+        message.eventId === nextMessage.eventId && message.toolCallId == null,
+    );
+
+  if (!sameEventMessages.length) {
+    return messages.length;
+  }
+
+  if (nextMessage.role === 'user') {
+    const firstNonUserMessage = sameEventMessages.find(
+      ({ message }) => message.role !== 'user',
+    );
+
+    if (firstNonUserMessage) {
+      return firstNonUserMessage.index;
+    }
+  }
+
+  return sameEventMessages[sameEventMessages.length - 1].index + 1;
+};
+
 const upsertLiveMessage = (
   messages: LiveChatMessage[],
   nextMessage: LiveChatMessage,
@@ -338,17 +453,114 @@ const upsertLiveMessage = (
   }
 
   const existingIndex = messages.findIndex(
-    (message) => message.eventId === nextMessage.eventId,
+    (message) =>
+      message.eventId === nextMessage.eventId &&
+      message.role === nextMessage.role,
   );
 
   if (existingIndex === -1) {
-    return [...messages, nextMessage];
+    const insertIndex = getEventMessageInsertIndex(messages, nextMessage);
+
+    if (insertIndex >= messages.length) {
+      return [...messages, nextMessage];
+    }
+
+    return [
+      ...messages.slice(0, insertIndex),
+      nextMessage,
+      ...messages.slice(insertIndex),
+    ];
   }
 
   const nextMessages = [...messages];
   nextMessages[existingIndex] = nextMessage;
 
   return nextMessages;
+};
+
+const finalizeLiveMessage = (
+  messages: LiveChatMessage[],
+  nextMessage: LiveChatMessage,
+) => {
+  if (
+    nextMessage.role === 'tool' ||
+    nextMessage.meta ||
+    nextMessage.eventId == null
+  ) {
+    return upsertLiveMessage(messages, nextMessage);
+  }
+
+  const existingIndex = messages.findIndex(
+    (message) =>
+      message.eventId === nextMessage.eventId &&
+      message.role === nextMessage.role,
+  );
+
+  if (existingIndex !== -1) {
+    return upsertLiveMessage(messages, nextMessage);
+  }
+
+  const liveMessageIndex = findLastMatchingMessageIndex(
+    messages,
+    (message) => message.role === nextMessage.role && message.meta === 'live',
+  );
+
+  if (liveMessageIndex === -1) {
+    return upsertLiveMessage(messages, nextMessage);
+  }
+
+  const liveMessage = messages[liveMessageIndex];
+  const nextMessages = [...messages];
+  nextMessages[liveMessageIndex] = {
+    ...liveMessage,
+    ...nextMessage,
+    id: liveMessage.id,
+    meta: undefined,
+  };
+
+  return nextMessages;
+};
+
+const applyAssistantStreamPart = (
+  messages: LiveChatMessage[],
+  part: {
+    eventId: number;
+    text: string;
+    type: 'delta' | 'start' | 'stop';
+  },
+) => {
+  const existingMessage = messages.find(
+    (message) =>
+      message.eventId === part.eventId && message.role === 'assistant',
+  );
+
+  if (part.type === 'stop') {
+    if (!existingMessage) {
+      return messages;
+    }
+
+    return upsertLiveMessage(messages, {
+      ...existingMessage,
+      meta: undefined,
+    });
+  }
+
+  const nextText =
+    part.type === 'delta'
+      ? `${existingMessage?.text ?? ''}${part.text}`
+      : part.text || existingMessage?.text || '';
+
+  if (!nextText.trim()) {
+    return messages;
+  }
+
+  return upsertLiveMessage(
+    messages,
+    createLiveMessage('assistant', nextText, {
+      eventId: part.eventId,
+      meta: 'live',
+    }),
+  );
 };
 
 const toVoiceState = (
@@ -888,17 +1100,58 @@ export function App() {
         setRequestNotice('Page context ready.');
       }
     },
+    onAgentChatResponsePart: ({ event_id, text, type }) => {
+      setMessages((currentMessages) =>
+        applyAssistantStreamPart(currentMessages, {
+          eventId: event_id,
+          text,
+          type,
+        }),
+      );
+
+      if (type !== 'stop') {
+        setIsAwaitingReply(false);
+      }
+    },
+    onDebug: (info) => {
+      if (isTentativeUserTranscriptDebugEvent(info)) {
+        const { event_id, user_transcript } = info.tentative_user_transcription_event;
+
+        setMessages((currentMessages) =>
+          upsertLiveMessage(
+            currentMessages,
+            createLiveMessage('user', user_transcript, {
+              eventId: event_id,
+              meta: 'live',
+            }),
+          ),
+        );
+        setIsAwaitingReply(true);
+        return;
+      }
+
+      if (isAgentResponseCorrectionDebugEvent(info)) {
+        const { corrected_agent_response, event_id } =
+          info.agent_response_correction_event;
+
+        setMessages((currentMessages) =>
+          upsertLiveMessage(
+            currentMessages,
+            createLiveMessage('assistant', corrected_agent_response, {
+              eventId: event_id,
+            }),
+          ),
+        );
+      }
+    },
     onMessage: ({ event_id, message, role }) => {
       setMessages((currentMessages) =>
-        upsertLiveMessage(currentMessages, {
-          eventId: event_id,
-          id:
-            event_id == null
-              ? `${role}-${Date.now()}`
-              : `${role}-${String(event_id)}`,
-          role: role === 'agent' ? 'assistant' : 'user',
-          text: message,
-        }),
+        finalizeLiveMessage(
+          currentMessages,
+          createLiveMessage(role === 'agent' ? 'assistant' : 'user', message, {
+            eventId: event_id,
+          }),
+        ),
       );
 
       setIsAwaitingReply(role === 'user');

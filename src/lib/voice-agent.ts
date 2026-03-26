@@ -8,7 +8,22 @@ const elevenLabsAgentTools = [
 
 export const elevenLabsVoiceDefaults = {
   agentName: 'rockitt voice',
-  configVersion: 8,
+  configVersion: 11,
+  clientEvents: [
+    'audio',
+    'agent_response',
+    'agent_response_correction',
+    'agent_chat_response_part',
+    'user_transcript',
+    'tentative_user_transcript',
+    'interruption',
+    'client_tool_call',
+    'agent_tool_request',
+    'agent_tool_response',
+    'ping',
+    'conversation_initiation_metadata',
+    'asr_initiation_metadata',
+  ],
   llm: 'gemini-2.0-flash',
   maxDurationSeconds: 600,
   maxTokens: -1,

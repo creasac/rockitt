@@ -4,6 +4,7 @@ import { RockittPageToggle } from './RockittPageToggle';
 
 type ChatMessage = {
   id: string;
+  meta?: string;
   role: 'assistant' | 'tool' | 'user';
   status?: 'error' | 'running' | 'success';
   text: string;
@@ -51,6 +52,9 @@ export function ConversationView({
             key={message.id}
             className={`message message--${message.role}${message.status ? ` message--${message.status}` : ''}`}
           >
+            {message.meta ? (
+              <p className="message__meta">{message.meta}</p>
+            ) : null}
             <p className="message__text">{message.text}</p>
           </article>
         ))}

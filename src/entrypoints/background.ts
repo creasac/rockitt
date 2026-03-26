@@ -604,6 +604,7 @@ const createElevenLabsAgent = async (
           },
         },
         conversation: {
+          client_events: elevenLabsVoiceDefaults.clientEvents,
           max_duration_seconds: elevenLabsVoiceDefaults.maxDurationSeconds,
         },
         tts: {
