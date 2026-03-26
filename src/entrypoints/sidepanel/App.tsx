@@ -1945,16 +1945,18 @@ export function App() {
       <div className="ambient ambient--two" />
 
       <div className="panel">
-        <div className="panel__toolbar">
-          <button
-            aria-label="Open settings"
-            className="icon-button"
-            type="button"
-            onClick={() => setIsSettingsOpen(true)}
-          >
-            <Settings2 size={16} strokeWidth={2} />
-          </button>
-        </div>
+        {panelMode === 'voice' ? (
+          <div className="panel__toolbar">
+            <button
+              aria-label="Open settings"
+              className="icon-button"
+              type="button"
+              onClick={() => setIsSettingsOpen(true)}
+            >
+              <Settings2 size={16} strokeWidth={2} />
+            </button>
+          </div>
+        ) : null}
 
         <main className="panel__body">
           <div className="panel__viewport">
@@ -1968,6 +1970,14 @@ export function App() {
               >
                 <VoiceOrb
                   disabled={isVoiceControlPending}
+                  getInputByteFrequencyData={() =>
+                    conversation.getInputByteFrequencyData()
+                  }
+                  getInputVolume={() => conversation.getInputVolume()}
+                  getOutputByteFrequencyData={() =>
+                    conversation.getOutputByteFrequencyData()
+                  }
+                  getOutputVolume={() => conversation.getOutputVolume()}
                   label={
                     conversation.status === 'connected'
                       ? 'End live voice session'
@@ -2043,6 +2053,7 @@ export function App() {
                   messages={messages}
                   onBackToVoice={toggleMode}
                   onChangeDraft={handleChatDraftChange}
+                  onOpenSettings={() => setIsSettingsOpen(true)}
                   onSubmit={() => {
                     void handleChatSubmit();
                   }}

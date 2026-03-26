@@ -1,4 +1,4 @@
-import { Send } from 'lucide-react';
+import { Send, Settings2 } from 'lucide-react';
 import { useEffect, useRef } from 'react';
 
 import { RockittPageToggle } from './RockittPageToggle';
@@ -24,6 +24,7 @@ type ConversationViewProps = {
   messages: ChatMessage[];
   onBackToVoice: () => void;
   onChangeDraft: (value: string) => void;
+  onOpenSettings: () => void;
   onSubmit: () => void;
   onToggleLive: () => void;
   onToggleMute: () => void;
@@ -48,6 +49,7 @@ export function ConversationView({
   messages,
   onBackToVoice,
   onChangeDraft,
+  onOpenSettings,
   onSubmit,
   onToggleLive,
   onToggleMute,
@@ -124,36 +126,65 @@ export function ConversationView({
           onToggleLive={onToggleLive}
           onToggleMute={onToggleMute}
         />
-        <form
-          className="composer"
-          onSubmit={(event) => {
-            event.preventDefault();
-            onSubmit();
-          }}
-        >
-          <label className="composer__label" htmlFor="rockitt-message">
-            Type a question
-          </label>
-          <input
-            disabled={!canSend}
-            id="rockitt-message"
-            className="composer__input"
-            placeholder={
-              canSend ? 'Type into the live session' : 'Start voice to unlock chat'
-            }
-            type="text"
-            value={draft}
-            onChange={(event) => onChangeDraft(event.target.value)}
-          />
+        <div className="composer-row">
           <button
-            aria-label="Send message"
-            className="composer__send"
-            disabled={!canSend || !draft.trim()}
-            type="submit"
+            aria-label="Open settings"
+            className="icon-button composer-row__settings"
+            type="button"
+            onClick={onOpenSettings}
           >
-            <Send size={16} strokeWidth={2} />
+            <Settings2 size={16} strokeWidth={2} />
           </button>
-        </form>
+
+          <form
+            className="composer"
+            onSubmit={(event) => {
+              event.preventDefault();
+
+              if (!canSend || !draft.trim()) {
+                return;
+              }
+
+              onSubmit();
+            }}
+          >
+            <label className="composer__label" htmlFor="rockitt-message">
+              Type a question
+            </label>
+            <input
+              disabled={!canSend}
+              id="rockitt-message"
+              className="composer__input"
+              placeholder={
+                canSend ? 'Type into the live session' : 'Start voice to unlock chat'
+              }
+              type="text"
+              value={draft}
+              onChange={(event) => onChangeDraft(event.target.value)}
+              onKeyDown={(event) => {
+                if (
+                  event.key !== 'Enter' ||
+                  event.nativeEvent.isComposing ||
+                  !canSend ||
+                  !draft.trim()
+                ) {
+                  return;
+                }
+
+                event.preventDefault();
+                event.currentTarget.form?.requestSubmit();
+              }}
+            />
+            <button
+              aria-label="Send message"
+              className="composer__send"
+              disabled={!canSend || !draft.trim()}
+              type="submit"
+            >
+              <Send size={16} strokeWidth={2} />
+            </button>
+          </form>
+        </div>
       </div>
     </div>
   );
