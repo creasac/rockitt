@@ -1,5 +1,6 @@
 import { LoaderCircle, Send } from 'lucide-react';
-import type { ReactNode } from 'react';
+
+import { RockittPageToggle } from './RockittPageToggle';
 
 type ChatMessage = {
   id: string;
@@ -11,7 +12,6 @@ type ChatMessage = {
 
 type ConversationViewProps = {
   canSend: boolean;
-  debugPanel?: ReactNode;
   draft: string;
   isAwaitingReply: boolean;
   messages: ChatMessage[];
@@ -22,7 +22,6 @@ type ConversationViewProps = {
 
 export function ConversationView({
   canSend,
-  debugPanel,
   draft,
   isAwaitingReply,
   messages,
@@ -33,17 +32,11 @@ export function ConversationView({
   return (
     <div className="chat-shell">
       <div className="chat-shell__top">
-        <button
-          className="text-toggle text-toggle--chat"
-          type="button"
-          onClick={onBackToVoice}
-        >
-          Back to voice
-        </button>
-
-        {debugPanel ? (
-          <div className="chat-shell__debug">{debugPanel}</div>
-        ) : null}
+        <RockittPageToggle
+          direction="down"
+          label="Return to voice"
+          onPress={onBackToVoice}
+        />
       </div>
 
       <div className="chat-feed">

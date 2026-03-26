@@ -7,6 +7,7 @@ import {
   DebugActivityPanel,
   type DebugActivity,
 } from '../../components/DebugActivityPanel';
+import { RockittPageToggle } from '../../components/RockittPageToggle';
 import { SettingsSheet } from '../../components/SettingsSheet';
 import { VoiceOrb } from '../../components/VoiceOrb';
 import {
@@ -1414,6 +1415,24 @@ export function App() {
     : 'Add a Firecrawl key to enable live web lookup.';
   const pageContextMeta =
     'Current-tab context is read locally only when the question is about the page.';
+  const settingsDetails = [
+    {
+      label: 'Voice agent',
+      value: voiceMeta,
+    },
+    {
+      label: 'Microphone',
+      value: microphoneMeta,
+    },
+    {
+      label: 'Live web',
+      value: liveWebMeta,
+    },
+    {
+      label: 'Page context',
+      value: pageContextMeta,
+    },
+  ];
 
   return (
     <div className="app-frame">
@@ -1433,91 +1452,87 @@ export function App() {
         </div>
 
         <main className="panel__body">
-          {panelMode === 'voice' ? (
-            <section className="voice-view">
-              <div className="voice-view__status">
-                <span className="status-pill">{stateCopy.label}</span>
-              </div>
+          <div className="panel__viewport">
+            <div
+              className={`panel__pages${panelMode === 'chat' ? ' panel__pages--chat' : ''}`}
+            >
+              <section
+                aria-hidden={panelMode !== 'voice'}
+                className="panel__page voice-view"
+                inert={panelMode !== 'voice'}
+              >
+                <div className="voice-view__status">
+                  <span className="status-pill">{stateCopy.label}</span>
+                </div>
 
-              <VoiceOrb
-                disabled={isStartingVoice || conversation.status === 'connecting'}
-                label={
-                  conversation.status === 'connected'
-                    ? 'End live voice session'
-                    : 'Start live voice session'
-                }
-                state={voiceState}
-                onPress={() => {
-                  void handleOrbPress();
-                }}
-              />
-
-              <div className="voice-view__copy">
-                <p className="voice-view__hint">{voiceHint}</p>
-                <p className="voice-view__meta">{voiceMeta}</p>
-                <p className="voice-view__meta">{microphoneMeta}</p>
-                <p className="voice-view__meta">{liveWebMeta}</p>
-                <p className="voice-view__meta">{pageContextMeta}</p>
-
-                {requestNotice ? (
-                  <div className="inline-banner inline-banner--notice" role="status">
-                    {requestNotice}
-                  </div>
-                ) : null}
-
-                {requestError ? (
-                  <div className="inline-banner inline-banner--error" role="alert">
-                    {requestError}
-                  </div>
-                ) : null}
-
-                <DebugActivityPanel
-                  activities={debugActivities}
-                  onClear={clearDebugActivities}
+                <VoiceOrb
+                  disabled={isStartingVoice || conversation.status === 'connecting'}
+                  label={
+                    conversation.status === 'connected'
+                      ? 'End live voice session'
+                      : 'Start live voice session'
+                  }
+                  state={voiceState}
+                  onPress={() => {
+                    void handleOrbPress();
+                  }}
                 />
 
-                {hasVoiceKey && microphoneState !== 'granted' ? (
-                  <div className="voice-view__actions">
-                    <button
-                      className="action-button action-button--ghost"
-                      type="button"
-                      onClick={() => {
-                        void openMicrophonePermissionPage();
-                      }}
-                    >
-                      Open mic permission tab
-                    </button>
-                  </div>
-                ) : null}
+                <div className="voice-view__copy">
+                  <p className="voice-view__hint">{voiceHint}</p>
 
-                <button
-                  className="text-toggle"
-                  type="button"
-                  onClick={toggleMode}
-                >
-                  Reveal chat
-                </button>
-              </div>
-            </section>
-          ) : (
-            <ConversationView
-              canSend={conversation.status === 'connected'}
-              debugPanel={
-                <DebugActivityPanel
-                  activities={debugActivities}
-                  onClear={clearDebugActivities}
+                  {requestNotice ? (
+                    <div className="inline-banner inline-banner--notice" role="status">
+                      {requestNotice}
+                    </div>
+                  ) : null}
+
+                  {requestError ? (
+                    <div className="inline-banner inline-banner--error" role="alert">
+                      {requestError}
+                    </div>
+                  ) : null}
+
+                  {hasVoiceKey && microphoneState !== 'granted' ? (
+                    <div className="voice-view__actions">
+                      <button
+                        className="action-button action-button--ghost"
+                        type="button"
+                        onClick={() => {
+                          void openMicrophonePermissionPage();
+                        }}
+                      >
+                        Open mic permission tab
+                      </button>
+                    </div>
+                  ) : null}
+
+                  <RockittPageToggle
+                    label="Open chat"
+                    onPress={toggleMode}
+                  />
+                </div>
+              </section>
+
+              <section
+                aria-hidden={panelMode !== 'chat'}
+                className="panel__page"
+                inert={panelMode !== 'chat'}
+              >
+                <ConversationView
+                  canSend={conversation.status === 'connected'}
+                  draft={chatDraft}
+                  isAwaitingReply={isAwaitingReply}
+                  messages={messages}
+                  onBackToVoice={toggleMode}
+                  onChangeDraft={handleChatDraftChange}
+                  onSubmit={() => {
+                    handleChatSubmit();
+                  }}
                 />
-              }
-              draft={chatDraft}
-              isAwaitingReply={isAwaitingReply}
-              messages={messages}
-              onBackToVoice={toggleMode}
-              onChangeDraft={handleChatDraftChange}
-              onSubmit={() => {
-                handleChatSubmit();
-              }}
-            />
-          )}
+              </section>
+            </div>
+          </div>
         </main>
 
         {isSettingsOpen ? (
@@ -1530,6 +1545,13 @@ export function App() {
             />
 
             <SettingsSheet
+              activityPanel={
+                <DebugActivityPanel
+                  activities={debugActivities}
+                  onClear={clearDebugActivities}
+                />
+              }
+              details={settingsDetails}
               drafts={drafts}
               pendingAction={pendingAction}
               providerState={providerState}

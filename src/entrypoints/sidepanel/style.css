@@ -129,6 +129,33 @@ button {
   position: relative;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+}
+
+.panel__viewport {
+  height: 100%;
+  overflow: hidden;
+}
+
+.panel__pages {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  will-change: transform;
+  transition: transform 280ms cubic-bezier(0.24, 0.84, 0.32, 1);
+}
+
+.panel__pages--chat {
+  transform: translateY(-100%);
+}
+
+.panel__page {
+  flex: 0 0 100%;
+  min-height: 0;
+}
+
+.panel__page[aria-hidden='true'] {
+  pointer-events: none;
 }
 
 .voice-view,
@@ -315,17 +342,46 @@ button {
   color: #9b4242;
 }
 
-.text-toggle {
-  border: none;
-  background: transparent;
-  padding: 0;
-  color: var(--accent);
-  font-size: 0.86rem;
-  font-weight: 500;
+.mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 3rem;
+  height: 3rem;
+  border: 1px solid rgba(17, 19, 24, 0.08);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  box-shadow:
+    0 12px 24px rgba(17, 19, 24, 0.1),
+    inset 0 1px 0 rgba(255, 255, 255, 0.54);
+  padding: 0.48rem;
+  transition:
+    transform 160ms ease,
+    background 160ms ease,
+    box-shadow 160ms ease,
+    border-color 160ms ease;
 }
 
-.text-toggle--chat {
-  color: var(--muted);
+.mode-toggle:hover {
+  transform: translateY(-1px);
+  border-color: rgba(20, 99, 255, 0.16);
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow:
+    0 14px 30px rgba(20, 99, 255, 0.14),
+    inset 0 1px 0 rgba(255, 255, 255, 0.58);
+}
+
+.mode-toggle__icon {
+  display: block;
+  width: 100%;
+  height: auto;
+  pointer-events: none;
+  user-select: none;
+  transition: transform 160ms ease;
+}
+
+.mode-toggle--down .mode-toggle__icon {
+  transform: rotate(180deg);
 }
 
 .chat-shell {
@@ -338,13 +394,9 @@ button {
 .chat-shell__top {
   display: flex;
   flex-direction: column;
-  align-items: flex-start;
+  align-items: center;
   gap: 0.85rem;
   padding: 0.95rem 1rem 0;
-}
-
-.chat-shell__debug {
-  width: 100%;
 }
 
 .chat-feed {
@@ -833,17 +885,16 @@ button {
 
 .settings-sheet {
   position: absolute;
-  top: 1rem;
-  right: 1rem;
+  inset: 0;
   z-index: 3;
-  width: min(20rem, calc(100% - 2rem));
-  max-height: calc(100% - 2rem);
+  width: 100%;
+  max-height: none;
   overflow-y: auto;
-  padding: 1rem;
-  border: 1px solid rgba(255, 255, 255, 0.54);
-  border-radius: 1.4rem;
+  padding: 0.95rem;
+  border: none;
+  border-radius: 0;
   background: var(--surface-strong);
-  box-shadow: var(--surface-shadow);
+  box-shadow: none;
   backdrop-filter: blur(18px);
 }
 
@@ -880,6 +931,64 @@ button {
 
 .settings-sheet__footnote {
   margin: 1rem 0 0;
+}
+
+.settings-section {
+  margin-top: 1rem;
+}
+
+.settings-section__header {
+  margin-bottom: 0.72rem;
+}
+
+.settings-section__title,
+.settings-section__copy {
+  margin: 0;
+}
+
+.settings-section__title {
+  font-size: 0.96rem;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.settings-section__copy {
+  margin-top: 0.22rem;
+  color: var(--muted);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.settings-detail-grid {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.settings-detail {
+  padding: 0.82rem 0.88rem;
+  border: 1px solid rgba(17, 19, 24, 0.06);
+  border-radius: 1rem;
+  background: rgba(245, 247, 250, 0.82);
+}
+
+.settings-detail__label,
+.settings-detail__value {
+  margin: 0;
+}
+
+.settings-detail__label {
+  color: var(--muted-soft);
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 0.64rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.settings-detail__value {
+  margin-top: 0.34rem;
+  color: var(--ink);
+  font-size: 0.82rem;
+  line-height: 1.45;
 }
 
 .settings-banner {
@@ -1038,6 +1147,14 @@ button {
   background: rgba(255, 255, 255, 0.86);
   color: var(--ink);
   box-shadow: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mode-toggle,
+  .mode-toggle__icon,
+  .panel__pages {
+    transition: none;
+  }
 }
 
 .action-button--danger {

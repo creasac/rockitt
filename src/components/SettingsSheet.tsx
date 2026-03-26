@@ -7,6 +7,7 @@ import {
   Trash2,
   X,
 } from 'lucide-react';
+import type { ReactNode } from 'react';
 
 import {
   providerCatalog,
@@ -14,7 +15,14 @@ import {
   type ProviderStatusMap,
 } from '../lib/provider-settings';
 
+type SettingsDetail = {
+  label: string;
+  value: string;
+};
+
 type SettingsSheetProps = {
+  activityPanel?: ReactNode;
+  details: SettingsDetail[];
   drafts: Record<ProviderId, string>;
   onChangeDraft: (provider: ProviderId, value: string) => void;
   onClose: () => void;
@@ -49,6 +57,8 @@ const formatTimestamp = (value: string | null) => {
 };
 
 export function SettingsSheet({
+  activityPanel,
+  details,
   drafts,
   onChangeDraft,
   onClose,
@@ -64,7 +74,7 @@ export function SettingsSheet({
     <aside aria-label="Settings" className="settings-sheet">
       <div className="settings-sheet__header">
         <div>
-          <p className="eyebrow">Privacy</p>
+          <p className="eyebrow">Settings</p>
           <h2 className="settings-sheet__title">Provider keys</h2>
         </div>
 
@@ -225,6 +235,41 @@ export function SettingsSheet({
           );
         })}
       </div>
+
+      <section className="settings-section">
+        <div className="settings-section__header">
+          <div>
+            <p className="settings-section__title">Session details</p>
+            <p className="settings-section__copy">
+              Moved out of the main panel to keep the orb page clean.
+            </p>
+          </div>
+        </div>
+
+        <div className="settings-detail-grid">
+          {details.map((detail) => (
+            <article key={detail.label} className="settings-detail">
+              <p className="settings-detail__label">{detail.label}</p>
+              <p className="settings-detail__value">{detail.value}</p>
+            </article>
+          ))}
+        </div>
+      </section>
+
+      {activityPanel ? (
+        <section className="settings-section">
+          <div className="settings-section__header">
+            <div>
+              <p className="settings-section__title">Tool activity</p>
+              <p className="settings-section__copy">
+                Recent tool calls and session events.
+              </p>
+            </div>
+          </div>
+
+          {activityPanel}
+        </section>
+      ) : null}
 
       <p className="settings-sheet__footnote">
         Store history and transcripts separately from provider secrets. Those can
