@@ -3,6 +3,10 @@ import { Settings2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 
 import { ConversationView } from '../../components/ConversationView';
+import {
+  DebugActivityPanel,
+  type DebugActivity,
+} from '../../components/DebugActivityPanel';
 import { SettingsSheet } from '../../components/SettingsSheet';
 import { VoiceOrb } from '../../components/VoiceOrb';
 import {
@@ -10,7 +14,11 @@ import {
   sendProviderMessage,
   sendVoiceMessage,
 } from '../../lib/background-client';
-import { firecrawlToolNames } from '../../lib/firecrawl';
+import {
+  firecrawlToolNames,
+  type FirecrawlScrapeToolResult,
+  type FirecrawlSearchToolResult,
+} from '../../lib/firecrawl';
 import {
   voiceStates,
   type PanelMode,
@@ -57,8 +65,118 @@ const firecrawlToolStatusCopy = {
   [firecrawlToolNames.search]: 'Checking the live web with Firecrawl.',
 } as const;
 
+const firecrawlToolTitleCopy = {
+  [firecrawlToolNames.scrape]: 'Firecrawl scrape',
+  [firecrawlToolNames.search]: 'Firecrawl search',
+} as const;
+
+const debugActivityStorageKey = 'rockitt.debug-activity.v1';
+const maxDebugActivityCount = 24;
+const clientToolErrorPrefix = 'Client tool execution failed with following error: ';
+
+type FirecrawlToolName =
+  (typeof firecrawlToolNames)[keyof typeof firecrawlToolNames];
+
 const isDomException = (value: unknown): value is DOMException =>
   value instanceof DOMException;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+  typeof value === 'object' && value !== null;
+
+const createDebugActivityId = () =>
+  typeof crypto !== 'undefined' && 'randomUUID' in crypto
+    ? crypto.randomUUID()
+    : `debug-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+const readStoredDebugActivities = (): DebugActivity[] => {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(debugActivityStorageKey);
+
+    if (!storedValue) {
+      return [];
+    }
+
+    const parsedValue = JSON.parse(storedValue);
+
+    return Array.isArray(parsedValue)
+      ? (parsedValue as DebugActivity[]).slice(0, maxDebugActivityCount)
+      : [];
+  } catch {
+    return [];
+  }
+};
+
+const pluralize = (count: number, singular: string, plural = `${singular}s`) =>
+  count === 1 ? singular : plural;
+
+const getFirecrawlSearchQuery = (parameters: unknown) => {
+  if (!isRecord(parameters) || typeof parameters.query !== 'string') {
+    return 'the requested query';
+  }
+
+  return `"${parameters.query}"`;
+};
+
+const getFirecrawlScrapeUrl = (parameters: unknown) => {
+  if (!isRecord(parameters) || typeof parameters.url !== 'string') {
+    return 'the requested URL';
+  }
+
+  return parameters.url;
+};
+
+const getFirecrawlStartSummary = (
+  toolName: FirecrawlToolName,
+  parameters: unknown,
+) => {
+  if (toolName === firecrawlToolNames.search) {
+    return `Started a live web search for ${getFirecrawlSearchQuery(parameters)}.`;
+  }
+
+  return `Started fetching ${getFirecrawlScrapeUrl(parameters)} with Firecrawl.`;
+};
+
+const getFirecrawlSearchTarget = (result: FirecrawlSearchToolResult) =>
+  result.mode === 'web-and-news'
+    ? 'the live web and news'
+    : result.mode === 'news'
+      ? 'live news'
+      : 'the live web';
+
+const summarizeFirecrawlSearchResult = (result: FirecrawlSearchToolResult) => {
+  if (!result.results.length) {
+    return `Searched ${getFirecrawlSearchTarget(result)} for "${result.query}" and got 0 results.`;
+  }
+
+  const webCount = result.results.filter((item) => item.source === 'web').length;
+  const newsCount = result.results.filter((item) => item.source === 'news').length;
+  const sourceCounts = [
+    webCount ? `${webCount} web ${pluralize(webCount, 'page')}` : null,
+    newsCount ? `${newsCount} news ${pluralize(newsCount, 'result')}` : null,
+  ].filter(Boolean);
+
+  return `Searched ${getFirecrawlSearchTarget(result)} for "${result.query}" and returned ${sourceCounts.join(' and ')}.`;
+};
+
+const summarizeFirecrawlScrapeResult = (result: FirecrawlScrapeToolResult) => {
+  const titleCopy = result.title?.trim() ? ` Title: ${result.title.trim()}.` : '';
+  const statusCopy =
+    result.statusCode != null ? ` with status ${String(result.statusCode)}` : '';
+  const truncationCopy = result.truncated
+    ? ' Markdown was truncated for the tool response.'
+    : '';
+
+  return `Fetched ${result.url}${statusCopy}.${titleCopy}${truncationCopy}`;
+};
+
+const normalizeConversationError = (message: string) =>
+  message.startsWith(clientToolErrorPrefix)
+    ? message.slice(clientToolErrorPrefix.length)
+    : message;
 
 const upsertLiveMessage = (
   messages: LiveChatMessage[],
@@ -146,8 +264,34 @@ const formatDisconnectError = (
   return details.message ?? 'The voice session ended unexpectedly.';
 };
 
+const formatDisconnectSummary = (
+  details:
+    | {
+        message?: string;
+        reason: 'agent' | 'error' | 'user';
+      }
+    | undefined,
+) => {
+  if (!details) {
+    return 'Voice session disconnected.';
+  }
+
+  if (details.reason === 'user') {
+    return 'Voice session ended locally.';
+  }
+
+  if (details.reason === 'agent') {
+    return 'The agent ended the voice session.';
+  }
+
+  return details.message ?? 'Voice session ended with an unexpected error.';
+};
+
 export function App() {
   const [chatDraft, setChatDraft] = useState('');
+  const [debugActivities, setDebugActivities] = useState<DebugActivity[]>(
+    () => readStoredDebugActivities(),
+  );
   const [drafts, setDrafts] = useState<Record<ProviderId, string>>(emptyDraftState);
   const [isAwaitingReply, setIsAwaitingReply] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -165,38 +309,144 @@ export function App() {
     createEmptyVoiceRuntimeState(),
   );
 
+  const appendDebugActivity = (
+    activity: Omit<DebugActivity, 'createdAt' | 'id'> &
+      Partial<Pick<DebugActivity, 'createdAt' | 'id'>>,
+  ) => {
+    const nextActivity: DebugActivity = {
+      createdAt: new Date().toISOString(),
+      id: createDebugActivityId(),
+      ...activity,
+    };
+
+    setDebugActivities((currentActivities) =>
+      [nextActivity, ...currentActivities].slice(0, maxDebugActivityCount),
+    );
+
+    return nextActivity.id;
+  };
+
+  const updateDebugActivity = (
+    activityId: string,
+    updater: (activity: DebugActivity) => DebugActivity,
+  ) => {
+    setDebugActivities((currentActivities) =>
+      currentActivities.map((activity) =>
+        activity.id === activityId ? updater(activity) : activity,
+      ),
+    );
+  };
+
+  const addSessionDebugActivity = (
+    title: string,
+    summary: string,
+    status: DebugActivity['status'],
+    raw?: unknown,
+  ) => {
+    appendDebugActivity({
+      raw,
+      source: 'session',
+      status,
+      summary,
+      title,
+    });
+  };
+
+  const clearDebugActivities = () => {
+    setDebugActivities([]);
+  };
+
+  const runFirecrawlTool = async (
+    toolName: FirecrawlToolName,
+    parameters: unknown,
+  ) => {
+    setRequestError(null);
+    setRequestNotice(firecrawlToolStatusCopy[toolName]);
+
+    const activityId = appendDebugActivity({
+      firecrawl:
+        toolName === firecrawlToolNames.search
+          ? {
+              kind: 'search',
+              parameters,
+            }
+          : {
+              kind: 'scrape',
+              parameters,
+            },
+      source: 'firecrawl',
+      status: 'running',
+      summary: getFirecrawlStartSummary(toolName, parameters),
+      title: firecrawlToolTitleCopy[toolName],
+    });
+
+    try {
+      const response = await sendFirecrawlMessage(
+        toolName === firecrawlToolNames.search
+          ? {
+              type: 'firecrawl:search',
+              parameters,
+            }
+          : {
+              type: 'firecrawl:scrape',
+              parameters,
+            },
+      );
+
+      if (!response.ok) {
+        throw new Error(response.error);
+      }
+
+      if (toolName === firecrawlToolNames.search) {
+        const result = response.result as FirecrawlSearchToolResult;
+
+        updateDebugActivity(activityId, (activity) => ({
+          ...activity,
+          firecrawl: {
+            kind: 'search',
+            parameters,
+            result,
+          },
+          status: 'success',
+          summary: summarizeFirecrawlSearchResult(result),
+        }));
+      } else {
+        const result = response.result as FirecrawlScrapeToolResult;
+
+        updateDebugActivity(activityId, (activity) => ({
+          ...activity,
+          firecrawl: {
+            kind: 'scrape',
+            parameters,
+            result,
+          },
+          status: 'success',
+          summary: summarizeFirecrawlScrapeResult(result),
+        }));
+      }
+
+      return JSON.stringify(response.result);
+    } catch (error) {
+      const nextError =
+        error instanceof Error ? error.message : 'Unknown Firecrawl error.';
+
+      updateDebugActivity(activityId, (activity) => ({
+        ...activity,
+        error: nextError,
+        status: 'error',
+        summary: `${firecrawlToolTitleCopy[toolName]} failed: ${nextError}`,
+      }));
+
+      throw new Error(nextError);
+    }
+  };
+
   const conversation = useConversation({
     clientTools: {
-      [firecrawlToolNames.search]: async (parameters) => {
-        setRequestError(null);
-        setRequestNotice(firecrawlToolStatusCopy[firecrawlToolNames.search]);
-
-        const response = await sendFirecrawlMessage({
-          type: 'firecrawl:search',
-          parameters,
-        });
-
-        if (!response.ok) {
-          throw new Error(response.error);
-        }
-
-        return JSON.stringify(response.result);
-      },
-      [firecrawlToolNames.scrape]: async (parameters) => {
-        setRequestError(null);
-        setRequestNotice(firecrawlToolStatusCopy[firecrawlToolNames.scrape]);
-
-        const response = await sendFirecrawlMessage({
-          type: 'firecrawl:scrape',
-          parameters,
-        });
-
-        if (!response.ok) {
-          throw new Error(response.error);
-        }
-
-        return JSON.stringify(response.result);
-      },
+      [firecrawlToolNames.search]: async (parameters) =>
+        runFirecrawlTool(firecrawlToolNames.search, parameters),
+      [firecrawlToolNames.scrape]: async (parameters) =>
+        runFirecrawlTool(firecrawlToolNames.scrape, parameters),
     },
     connectionDelay: {
       android: 750,
@@ -206,24 +456,55 @@ export function App() {
     onConnect: () => {
       setRequestError(null);
       setRequestNotice('Voice session live.');
+      addSessionDebugActivity(
+        'Voice session connected',
+        'The live ElevenLabs session is active.',
+        'success',
+      );
     },
     onDisconnect: (details) => {
       setIsAwaitingReply(false);
 
       const nextError = formatDisconnectError(details);
+      const summary = formatDisconnectSummary(details);
+
+      addSessionDebugActivity(
+        nextError ? 'Voice session ended with error' : 'Voice session ended',
+        nextError ?? summary,
+        nextError ? 'error' : 'info',
+        details
+          ? {
+              message: details.message,
+              reason: details.reason,
+            }
+          : undefined,
+      );
 
       if (nextError) {
         setRequestError(nextError);
         return;
       }
 
-      if (details.reason === 'agent') {
+      if (details?.reason === 'agent') {
         setRequestNotice('Voice session ended.');
       }
     },
     onError: (message) => {
       setIsAwaitingReply(false);
-      setRequestError(message);
+      const nextMessage = normalizeConversationError(message);
+
+      setRequestError(nextMessage);
+
+      if (!message.startsWith(clientToolErrorPrefix)) {
+        addSessionDebugActivity(
+          'Live session error',
+          nextMessage,
+          'error',
+          {
+            message,
+          },
+        );
+      }
     },
     onAgentToolResponse: ({ is_error, tool_name }) => {
       if (
@@ -653,6 +934,26 @@ export function App() {
   }, []);
 
   useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    try {
+      if (!debugActivities.length) {
+        window.localStorage.removeItem(debugActivityStorageKey);
+        return;
+      }
+
+      window.localStorage.setItem(
+        debugActivityStorageKey,
+        JSON.stringify(debugActivities),
+      );
+    } catch {
+      // Ignore local persistence failures in the debug timeline.
+    }
+  }, [debugActivities]);
+
+  useEffect(() => {
     const handleWindowFocus = () => {
       void refreshMicrophonePermissionState();
     };
@@ -798,6 +1099,11 @@ export function App() {
                   </div>
                 ) : null}
 
+                <DebugActivityPanel
+                  activities={debugActivities}
+                  onClear={clearDebugActivities}
+                />
+
                 {hasVoiceKey && microphoneState !== 'granted' ? (
                   <div className="voice-view__actions">
                     <button
@@ -824,6 +1130,12 @@ export function App() {
           ) : (
             <ConversationView
               canSend={conversation.status === 'connected'}
+              debugPanel={
+                <DebugActivityPanel
+                  activities={debugActivities}
+                  onClear={clearDebugActivities}
+                />
+              }
               draft={chatDraft}
               isAwaitingReply={isAwaitingReply}
               messages={messages}

@@ -2,10 +2,10 @@ import { elevenLabsFirecrawlTools } from './firecrawl';
 
 export const elevenLabsVoiceDefaults = {
   agentName: 'rockitt voice',
-  configVersion: 3,
+  configVersion: 5,
   llm: 'gemini-2.0-flash',
   maxDurationSeconds: 600,
-  maxTokens: 120,
+  maxTokens: -1,
   prompt: [
     'You are Rockitt, a concise voice assistant inside a browser side panel.',
     'Keep answers brief, useful, and natural for spoken delivery.',
@@ -15,6 +15,7 @@ export const elevenLabsVoiceDefaults = {
     'If you are unsure, say so directly instead of guessing.',
     'When freshness matters, such as news, prices, releases, changing facts, or anything happening right now, use the Firecrawl search tool before answering.',
     'When the user provides a URL or asks you to inspect a specific web page, use the Firecrawl scrape tool with that URL before answering.',
+    'For recent news or fast-moving topics, prefer the freshest Firecrawl results so the answer reflects the latest available updates.',
     'Do not claim you checked the web unless you actually used a Firecrawl tool in this turn.',
     'If a Firecrawl tool fails, say live web lookup is unavailable right now and answer cautiously.',
   ].join(' '),

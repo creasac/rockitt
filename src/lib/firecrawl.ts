@@ -82,7 +82,7 @@ export const elevenLabsFirecrawlTools = [
         },
         mode: {
           description:
-            "Which result source to use. 'web' is the default. 'news' is useful for headlines. 'web-and-news' returns both.",
+            "Which result source to use. 'web' is the default. 'news' is useful for the latest headlines and recent updates. 'web-and-news' returns both.",
           enum: ['web', 'news', 'web-and-news'],
           type: 'string',
         },

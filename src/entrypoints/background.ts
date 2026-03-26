@@ -35,7 +35,7 @@ import {
 const elevenLabsApiBaseUrl = 'https://api.elevenlabs.io/v1';
 const firecrawlApiBaseUrl = 'https://api.firecrawl.dev/v2';
 const maxFirecrawlResultCount = 5;
-const maxFirecrawlScrapeMarkdownChars = 6_000;
+const maxFirecrawlScrapeMarkdownChars = 12_000;
 const firecrawlSearchModes: FirecrawlSearchMode[] = [
   'web',
   'news',

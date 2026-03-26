@@ -1,4 +1,5 @@
 import { LoaderCircle, Send } from 'lucide-react';
+import type { ReactNode } from 'react';
 
 type ChatMessage = {
   id: string;
@@ -9,6 +10,7 @@ type ChatMessage = {
 
 type ConversationViewProps = {
   canSend: boolean;
+  debugPanel?: ReactNode;
   draft: string;
   isAwaitingReply: boolean;
   messages: ChatMessage[];
@@ -19,6 +21,7 @@ type ConversationViewProps = {
 
 export function ConversationView({
   canSend,
+  debugPanel,
   draft,
   isAwaitingReply,
   messages,
@@ -36,6 +39,10 @@ export function ConversationView({
         >
           Back to voice
         </button>
+
+        {debugPanel ? (
+          <div className="chat-shell__debug">{debugPanel}</div>
+        ) : null}
       </div>
 
       <div className="chat-feed">
