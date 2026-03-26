@@ -10,6 +10,7 @@ import {
 import { RockittPageToggle } from '../../components/RockittPageToggle';
 import { SettingsSheet } from '../../components/SettingsSheet';
 import { VoiceOrb } from '../../components/VoiceOrb';
+import { VoiceSessionControls } from '../../components/VoiceSessionControls';
 import {
   sendFirecrawlMessage,
   sendPageContextMessage,
@@ -636,6 +637,7 @@ export function App() {
   );
   const [drafts, setDrafts] = useState<Record<ProviderId, string>>(emptyDraftState);
   const [isAwaitingReply, setIsAwaitingReply] = useState(false);
+  const [isMicMuted, setIsMicMuted] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isStartingVoice, setIsStartingVoice] = useState(false);
   const [messages, setMessages] = useState<LiveChatMessage[]>([]);
@@ -997,6 +999,7 @@ export function App() {
       default: 0,
       ios: 0,
     },
+    micMuted: isMicMuted,
     onConnect: () => {
       setRequestError(null);
       setRequestNotice('Voice session live.');
@@ -1491,8 +1494,12 @@ export function App() {
     }
   };
 
-  const handleOrbPress = async () => {
-    if (isStartingVoice || conversation.status === 'connecting') {
+  const handleLiveToggle = async () => {
+    if (
+      isStartingVoice ||
+      conversation.status === 'connecting' ||
+      conversation.status === 'disconnecting'
+    ) {
       return;
     }
 
@@ -1514,6 +1521,23 @@ export function App() {
     }
 
     await startVoiceSession();
+  };
+
+  const handleMuteToggle = () => {
+    const nextMuted = !isMicMuted;
+    setIsMicMuted(nextMuted);
+    setRequestError(null);
+
+    if (conversation.status === 'connected') {
+      setRequestNotice(nextMuted ? 'Microphone muted.' : 'Microphone live.');
+      return;
+    }
+
+    setRequestNotice(
+      nextMuted
+        ? 'Microphone will start muted on the next live session.'
+        : 'Microphone will be live on the next session.',
+    );
   };
 
   const handleChatDraftChange = (value: string) => {
@@ -1606,6 +1630,7 @@ export function App() {
       return;
     }
 
+    setIsMicMuted(false);
     setVoiceRuntime(createEmptyVoiceRuntimeState());
     setIsAwaitingReply(false);
     setMessages([]);
@@ -1653,7 +1678,24 @@ export function App() {
     .reverse()
     .find((message) => message.role === 'tool' && message.status === 'running');
   const hasVoiceKey = providerState.elevenlabs.hasKey;
-  const voiceHint = activeToolMessage?.text ?? (isStartingVoice ? 'thinking' : stateCopy.hint);
+  const isVoiceSessionLive = conversation.status === 'connected';
+  const isVoiceControlPending =
+    isStartingVoice ||
+    conversation.status === 'connecting' ||
+    conversation.status === 'disconnecting';
+  const liveControlLabel =
+    isStartingVoice || conversation.status === 'connecting'
+      ? 'Starting'
+      : conversation.status === 'disconnecting'
+        ? 'Ending'
+        : isVoiceSessionLive
+          ? 'End live'
+          : 'Go live';
+  const voiceHint =
+    activeToolMessage?.text ??
+    (isStartingVoice || conversation.status === 'connecting'
+      ? 'starting'
+      : stateCopy.hint);
   const voiceMeta = voiceRuntime.agent
     ? `${voiceRuntime.agent.llm} / ${voiceRuntime.agent.voiceLabel} / aggressive cost profile`
     : 'Automatic agent provisioning on first connect.';
@@ -1710,7 +1752,7 @@ export function App() {
                 inert={panelMode !== 'voice'}
               >
                 <VoiceOrb
-                  disabled={isStartingVoice || conversation.status === 'connecting'}
+                  disabled={isVoiceControlPending}
                   label={
                     conversation.status === 'connected'
                       ? 'End live voice session'
@@ -1718,12 +1760,27 @@ export function App() {
                   }
                   state={voiceState}
                   onPress={() => {
-                    void handleOrbPress();
+                    void handleLiveToggle();
                   }}
                 />
 
                 <div className="voice-view__copy">
                   <p className="voice-view__hint">{voiceHint}</p>
+
+                  <div className="voice-view__actions">
+                    <VoiceSessionControls
+                      isLive={isVoiceSessionLive}
+                      isMuted={isMicMuted}
+                      liveDisabled={isVoiceControlPending}
+                      liveLabel={liveControlLabel}
+                      muteDisabled={conversation.status === 'disconnecting'}
+                      showLive={false}
+                      onToggleLive={() => {
+                        void handleLiveToggle();
+                      }}
+                      onToggleMute={handleMuteToggle}
+                    />
+                  </div>
 
                   {requestError ? (
                     <div className="inline-banner inline-banner--error" role="alert">
@@ -1761,12 +1818,21 @@ export function App() {
                   canSend={conversation.status === 'connected'}
                   draft={chatDraft}
                   isAwaitingReply={isAwaitingReply}
+                  isLive={isVoiceSessionLive}
+                  isLiveControlDisabled={isVoiceControlPending}
+                  isMuted={isMicMuted}
+                  isMuteControlDisabled={conversation.status === 'disconnecting'}
+                  liveLabel={liveControlLabel}
                   messages={messages}
                   onBackToVoice={toggleMode}
                   onChangeDraft={handleChatDraftChange}
                   onSubmit={() => {
                     handleChatSubmit();
                   }}
+                  onToggleLive={() => {
+                    void handleLiveToggle();
+                  }}
+                  onToggleMute={handleMuteToggle}
                   statusText={voiceHint}
                 />
               </section>
