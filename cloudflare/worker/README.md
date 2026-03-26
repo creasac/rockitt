@@ -34,6 +34,7 @@ Example vars:
 {
   "ELEVENLABS_AGENT_ID": "agent_...",
   "ELEVENLABS_AGENT_NAME": "rockitt voice",
+  "ELEVENLABS_AGENT_CONFIG_VERSION": "13",
   "ELEVENLABS_AGENT_LLM": "gemini-2.0-flash",
   "ELEVENLABS_AGENT_VOICE_LABEL": "Sarah"
 }
@@ -82,3 +83,30 @@ WXT_BACKEND_BASE_URL=http://127.0.0.1:8787
 - The live voice session still connects directly from the browser to ElevenLabs.
 - Firecrawl routes use edge caching to cut latency and vendor spend.
 - If you enable the optional `ROCKITT_RATE_LIMITER` binding, the Worker will rate-limit by `x-rockitt-install-id`.
+
+## Updating The Existing Agent
+
+If you keep the same `ELEVENLABS_AGENT_ID`, update the deployed ElevenLabs agent in place:
+
+```bash
+cd cloudflare/worker
+ELEVENLABS_API_KEY=your_key \
+ELEVENLABS_AGENT_ID=agent_... \
+node scripts/update-elevenlabs-agent.mjs
+```
+
+Or, if your values already exist in `.dev.vars`, load them into your shell first:
+
+```bash
+cd cloudflare/worker
+set -a
+source .dev.vars
+set +a
+node scripts/update-elevenlabs-agent.mjs
+```
+
+Notes:
+
+- Updating the agent prompt/config in ElevenLabs does not require a Worker redeploy if the agent ID stays the same.
+- Redeploy the Worker only if you changed Worker vars such as `ELEVENLABS_AGENT_ID` or `ELEVENLABS_AGENT_CONFIG_VERSION`.
+- If you use ElevenLabs branches, set `ELEVENLABS_AGENT_BRANCH_ID` before running the update script to patch that branch instead of the default agent config.

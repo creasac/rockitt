@@ -191,7 +191,7 @@ const buildVoiceAgentSnapshot = (env, checkedAt) => {
   return {
     agentId: env.ELEVENLABS_AGENT_ID,
     agentName: env.ELEVENLABS_AGENT_NAME || 'rockitt voice',
-    configVersion: Number(env.ELEVENLABS_AGENT_CONFIG_VERSION || 11),
+    configVersion: Number(env.ELEVENLABS_AGENT_CONFIG_VERSION || 13),
     createdAt: env.ELEVENLABS_AGENT_CREATED_AT || checkedAt,
     llm: env.ELEVENLABS_AGENT_LLM || 'gemini-2.0-flash',
     maxDurationSeconds: Number(env.ELEVENLABS_AGENT_MAX_DURATION_SECONDS || 600),

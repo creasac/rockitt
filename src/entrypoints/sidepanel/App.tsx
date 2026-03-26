@@ -58,6 +58,11 @@ type LiveChatMessage = {
   toolCallId?: string;
 };
 
+type ConversationCarryoverEntry = {
+  role: 'assistant' | 'user';
+  text: string;
+};
+
 const elevenLabsWorkletPaths = {
   audioConcatProcessor: chrome.runtime.getURL(
     'elevenlabs/audioConcatProcessor.js',
@@ -91,6 +96,11 @@ const compactToolStatusCopy = {
   [pageContextToolNames.visible]: 'reading',
 } as const;
 
+const conversationCarryoverStorageKey = 'rockitt.conversation-carryover.v1';
+const conversationCarryoverDynamicVariable = 'recent_conversation_context';
+const maxConversationCarryoverEntries = 4;
+const maxConversationCarryoverEntryChars = 280;
+const maxConversationCarryoverTotalChars = 1_200;
 const debugActivityStorageKey = 'rockitt.debug-activity.v1';
 const maxDebugActivityCount = 24;
 const clientToolErrorPrefix = 'Client tool execution failed with following error: ';
@@ -354,6 +364,159 @@ const normalizeConversationError = (message: string) =>
   message.startsWith(clientToolErrorPrefix)
     ? message.slice(clientToolErrorPrefix.length)
     : message;
+
+const normalizeConversationCarryoverText = (value: string) =>
+  value.trim().replace(/\s+/g, ' ');
+
+const clampConversationCarryoverText = (value: string) => {
+  const normalized = normalizeConversationCarryoverText(value);
+
+  if (normalized.length <= maxConversationCarryoverEntryChars) {
+    return normalized;
+  }
+
+  return `${normalized.slice(0, maxConversationCarryoverEntryChars - 3).trimEnd()}...`;
+};
+
+const toConversationCarryoverEntry = (
+  value: unknown,
+): ConversationCarryoverEntry | null => {
+  if (!isRecord(value)) {
+    return null;
+  }
+
+  const role =
+    value.role === 'assistant' || value.role === 'user' ? value.role : null;
+  const text =
+    typeof value.text === 'string'
+      ? clampConversationCarryoverText(value.text)
+      : '';
+
+  if (!role || !text) {
+    return null;
+  }
+
+  return {
+    role,
+    text,
+  };
+};
+
+const isConversationCarryoverRole = (
+  role: LiveChatMessage['role'],
+): role is ConversationCarryoverEntry['role'] =>
+  role === 'assistant' || role === 'user';
+
+const getConversationCarryoverFromMessages = (
+  messages: LiveChatMessage[],
+): ConversationCarryoverEntry[] =>
+  messages
+    .flatMap((message) => {
+      if (!isConversationCarryoverRole(message.role) || message.meta) {
+        return [];
+      }
+
+      const text = clampConversationCarryoverText(message.text);
+
+      if (!text) {
+        return [];
+      }
+
+      return [
+        {
+          role: message.role,
+          text,
+        },
+      ];
+    })
+    .slice(-maxConversationCarryoverEntries);
+
+const readStoredConversationCarryover = (): ConversationCarryoverEntry[] => {
+  if (typeof window === 'undefined') {
+    return [];
+  }
+
+  try {
+    const storedValue = window.localStorage.getItem(
+      conversationCarryoverStorageKey,
+    );
+
+    if (!storedValue) {
+      return [];
+    }
+
+    const parsedValue = JSON.parse(storedValue);
+
+    if (!Array.isArray(parsedValue)) {
+      return [];
+    }
+
+    return parsedValue
+      .map((entry) => toConversationCarryoverEntry(entry))
+      .filter((entry): entry is ConversationCarryoverEntry => entry !== null)
+      .slice(-maxConversationCarryoverEntries);
+  } catch {
+    return [];
+  }
+};
+
+const writeStoredConversationCarryover = (
+  entries: ConversationCarryoverEntry[],
+) => {
+  if (typeof window === 'undefined' || !entries.length) {
+    return;
+  }
+
+  try {
+    window.localStorage.setItem(
+      conversationCarryoverStorageKey,
+      JSON.stringify(entries.slice(-maxConversationCarryoverEntries)),
+    );
+  } catch {
+    // Ignore local persistence failures for carry-over context.
+  }
+};
+
+const buildConversationCarryoverTurns = (
+  entries: ConversationCarryoverEntry[],
+) => {
+  if (!entries.length) {
+    return 'No recent prior Rockitt conversation.';
+  }
+
+  const lines: string[] = [];
+  let totalChars = 0;
+
+  for (const entry of entries) {
+    const line = `${entry.role === 'user' ? 'User' : 'Assistant'}: ${entry.text}`;
+    const lineLength = line.length + (lines.length ? 1 : 0);
+
+    if (totalChars + lineLength > maxConversationCarryoverTotalChars) {
+      break;
+    }
+
+    lines.push(line);
+    totalChars += lineLength;
+  }
+
+  return lines.join('\n') || 'No recent prior Rockitt conversation.';
+};
+
+const buildConversationCarryoverContextualUpdate = (
+  entries: ConversationCarryoverEntry[],
+) => {
+  if (!entries.length) {
+    return null;
+  }
+
+  return [
+    'Carry-over context from the user\'s previous Rockitt session.',
+    'Use it only as background context if it helps with the next request.',
+    'Do not answer this update directly or mention it unless the user asks about the earlier conversation.',
+    'Recent finalized turns:',
+    buildConversationCarryoverTurns(entries),
+  ].join('\n');
+};
 
 const createLiveMessage = (
   role: LiveChatMessage['role'],
@@ -1521,6 +1684,18 @@ export function App() {
     setRequestNotice(null);
 
     try {
+      const recentConversationCarryover =
+        getConversationCarryoverFromMessages(messages);
+      const effectiveConversationCarryover =
+        recentConversationCarryover.length > 0
+          ? recentConversationCarryover
+          : readStoredConversationCarryover();
+      const carryoverTurns = buildConversationCarryoverTurns(
+        effectiveConversationCarryover,
+      );
+      const carryoverContextualUpdate = buildConversationCarryoverContextualUpdate(
+        effectiveConversationCarryover,
+      );
       const currentUsage = await loadUsageState();
 
       if (!currentUsage.allowed) {
@@ -1558,7 +1733,35 @@ export function App() {
       await conversation.startSession({
         connectionType: 'webrtc',
         conversationToken: response.conversationToken,
+        dynamicVariables: {
+          [conversationCarryoverDynamicVariable]: carryoverTurns,
+        },
       });
+
+      if (carryoverContextualUpdate) {
+        try {
+          conversation.sendContextualUpdate(carryoverContextualUpdate);
+          addSessionDebugActivity(
+            'Conversation carry-over injected',
+            'Passed the last few finalized turns into the new ElevenLabs session.',
+            'info',
+            {
+              entries: effectiveConversationCarryover,
+            },
+          );
+        } catch (error) {
+          addSessionDebugActivity(
+            'Conversation carry-over failed',
+            error instanceof Error
+              ? error.message
+              : 'Unable to send prior-session context into the new voice session.',
+            'error',
+            {
+              entries: effectiveConversationCarryover,
+            },
+          );
+        }
+      }
     } catch (error) {
       setRequestError(
         error instanceof Error
@@ -1754,6 +1957,16 @@ export function App() {
       // Ignore local persistence failures in the debug timeline.
     }
   }, [debugActivities]);
+
+  useEffect(() => {
+    const nextCarryover = getConversationCarryoverFromMessages(messages);
+
+    if (!nextCarryover.length) {
+      return;
+    }
+
+    writeStoredConversationCarryover(nextCarryover);
+  }, [messages]);
 
   useEffect(() => {
     const handleWindowFocus = () => {
