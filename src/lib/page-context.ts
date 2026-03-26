@@ -1,3 +1,5 @@
+import type { PageSelectionSnapshot, PageSelectionUpdateMessage } from './page-selection';
+
 export const pageContextToolNames = {
   readable: 'get_readable_page_context',
   visible: 'get_visible_page_context',
@@ -39,6 +41,7 @@ export type VisiblePageContextSnapshot = {
     | 'product'
     | 'search-results';
   sectionHeadings: string[];
+  selection: PageSelectionSnapshot | null;
   title: string;
   truncated: boolean;
   url: string;
@@ -62,6 +65,7 @@ export type ReadablePageContextSnapshot = {
   matchedSections: ReadablePageContextSection[];
   pageType: VisiblePageContextSnapshot['pageType'];
   question: string | null;
+  selection: PageSelectionSnapshot | null;
   summary: string;
   title: string;
   truncated: boolean;
@@ -88,6 +92,10 @@ export type PageContextBackgroundMessage =
       parameters?: unknown;
     };
 
+export type AnyPageContextMessage =
+  | PageContextBackgroundMessage
+  | PageSelectionUpdateMessage;
+
 export type PageContextBackgroundResponse =
   | {
       ok: true;
@@ -107,7 +115,7 @@ export type PageContextExtractionInput = {
 export const elevenLabsPageContextTools = [
   {
     description:
-      'Read a compact summary of what is visible in the active browser tab right now. Use only when the user is asking about the current page, screen, tab, or an ambiguous "this" or "here" reference.',
+      'Read a compact summary of what is visible in the active browser tab right now. Include the user\'s current page selection when available. Use only when the user is asking about the current page, screen, tab, highlighted text, or an ambiguous "this" or "here" reference.',
     expects_response: true,
     name: pageContextToolNames.visible,
     parameters: {
@@ -118,7 +126,7 @@ export const elevenLabsPageContextTools = [
   },
   {
     description:
-      'Read more of the current page locally for text-heavy pages such as articles or docs. Use after the visible page tool when you need deeper context, and pass a short question so the tool can return only the most relevant sections.',
+      'Read more of the current page locally for text-heavy pages such as articles or docs. Include the user\'s current page selection when available. Use after the visible page tool when you need deeper context, and pass a short question so the tool can return only the most relevant sections.',
     expects_response: true,
     name: pageContextToolNames.readable,
     parameters: {

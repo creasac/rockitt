@@ -32,7 +32,9 @@ import {
   type FirecrawlSearchToolResult,
 } from '../lib/firecrawl';
 import { extractPageContextFromDocument } from '../lib/page-context-extractor';
+import type { PageSelectionSnapshot, PageSelectionUpdateMessage } from '../lib/page-selection';
 import {
+  type AnyPageContextMessage,
   pageContextToolNames,
   type PageContextBackgroundMessage,
   type PageContextBackgroundResponse,
@@ -72,6 +74,15 @@ const firecrawlTimeRangeToTbs: Partial<
   'past-year': 'qdr:y',
 };
 const maxReadablePageContextSections = 4;
+const maxCachedPageSelectionAgeMs = 5 * 60 * 1000;
+const pageSelectionByTabId = new Map<number, CachedPageSelection>();
+
+type CachedPageSelection = PageSelectionSnapshot & {
+  frameId: number;
+  frameUrl: string;
+  tabUrl: string;
+  updatedAt: string;
+};
 
 const toDebugDetails = (details: unknown) => {
   if (details == null) {
@@ -824,9 +835,45 @@ const readInjectedResult = <T,>(value: unknown) => {
   return value as T;
 };
 
+const clearCachedPageSelection = (tabId: number) => {
+  pageSelectionByTabId.delete(tabId);
+};
+
+const getCachedPageSelection = (
+  tabId: number,
+  tabUrl: string,
+): PageSelectionSnapshot | null => {
+  const cachedSelection = pageSelectionByTabId.get(tabId);
+
+  if (!cachedSelection) {
+    return null;
+  }
+
+  if (cachedSelection.tabUrl !== tabUrl) {
+    pageSelectionByTabId.delete(tabId);
+    return null;
+  }
+
+  const ageMs = Date.now() - Date.parse(cachedSelection.updatedAt);
+
+  if (!Number.isFinite(ageMs) || ageMs > maxCachedPageSelectionAgeMs) {
+    pageSelectionByTabId.delete(tabId);
+    return null;
+  }
+
+  return {
+    source: cachedSelection.source,
+    text: cachedSelection.text,
+    truncated: cachedSelection.truncated,
+  };
+};
+
 const executePageContextExtraction = async (
   input: PageContextExtractionInput,
-): Promise<ReadablePageContextSnapshot | VisiblePageContextSnapshot> => {
+): Promise<{
+  snapshot: ReadablePageContextSnapshot | VisiblePageContextSnapshot;
+  tab: chrome.tabs.Tab;
+}> => {
   const tab = await getActiveWebTab();
 
   try {
@@ -842,9 +889,12 @@ const executePageContextExtraction = async (
       throw new Error('The current page did not return any context.');
     }
 
-    return readInjectedResult<
-      ReadablePageContextSnapshot | VisiblePageContextSnapshot
-    >(injectionResult.result);
+    return {
+      snapshot: readInjectedResult<
+        ReadablePageContextSnapshot | VisiblePageContextSnapshot
+      >(injectionResult.result),
+      tab,
+    };
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
 
@@ -866,15 +916,64 @@ const executePageContextExtraction = async (
   }
 };
 
+const mergeCachedSelection = <T extends { selection: PageSelectionSnapshot | null }>(
+  snapshot: T,
+  tab: chrome.tabs.Tab,
+): T => {
+  if (snapshot.selection || !tab.id || !tab.url) {
+    return snapshot;
+  }
+
+  const cachedSelection = getCachedPageSelection(tab.id, tab.url);
+
+  if (!cachedSelection) {
+    return snapshot;
+  }
+
+  return {
+    ...snapshot,
+    selection: cachedSelection,
+  };
+};
+
+const cachePageSelectionUpdate = (
+  message: PageSelectionUpdateMessage,
+  sender: chrome.runtime.MessageSender,
+) => {
+  const tabId = sender.tab?.id;
+  const tabUrl = sender.tab?.url;
+
+  if (!tabId || !tabUrl) {
+    return;
+  }
+
+  if (!message.selection) {
+    clearCachedPageSelection(tabId);
+    return;
+  }
+
+  pageSelectionByTabId.set(tabId, {
+    ...message.selection,
+    frameId: sender.frameId ?? 0,
+    frameUrl: message.url,
+    tabUrl,
+    updatedAt: new Date().toISOString(),
+  });
+};
+
 const executeVisiblePageContext = async (
   _parameters: unknown,
 ): Promise<VisiblePageContextToolResult> => {
-  const snapshot = await executePageContextExtraction({
+  const { snapshot, tab } = await executePageContextExtraction({
     kind: 'visible',
   });
+  const mergedSnapshot = mergeCachedSelection(
+    snapshot as VisiblePageContextSnapshot,
+    tab,
+  );
 
   return {
-    ...(snapshot as VisiblePageContextSnapshot),
+    ...mergedSnapshot,
     capturedAt: new Date().toISOString(),
     tool: pageContextToolNames.visible,
   };
@@ -883,13 +982,17 @@ const executeVisiblePageContext = async (
 const executeReadablePageContext = async (
   parameters: unknown,
 ): Promise<ReadablePageContextToolResult> => {
-  const snapshot = await executePageContextExtraction({
+  const { snapshot, tab } = await executePageContextExtraction({
     kind: 'readable',
     ...parsePageContextReadableParameters(parameters),
   });
+  const mergedSnapshot = mergeCachedSelection(
+    snapshot as ReadablePageContextSnapshot,
+    tab,
+  );
 
   return {
-    ...(snapshot as ReadablePageContextSnapshot),
+    ...mergedSnapshot,
     capturedAt: new Date().toISOString(),
     tool: pageContextToolNames.readable,
   };
@@ -1072,8 +1175,9 @@ const handleFirecrawlMessage = async (
 };
 
 const handlePageContextMessage = async (
-  message: PageContextBackgroundMessage,
-): Promise<PageContextBackgroundResponse> => {
+  message: AnyPageContextMessage,
+  sender: chrome.runtime.MessageSender,
+): Promise<PageContextBackgroundResponse | { ok: true }> => {
   switch (message.type) {
     case 'page-context:get-visible':
       return {
@@ -1084,6 +1188,11 @@ const handlePageContextMessage = async (
       return {
         ok: true,
         result: await executeReadablePageContext(message.parameters),
+      };
+    case 'page-context:selection-updated':
+      cachePageSelectionUpdate(message, sender);
+      return {
+        ok: true,
       };
     default:
       return {
@@ -1124,7 +1233,17 @@ export default defineBackground(() => {
     void restrictStorageAccess();
   });
 
-  chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    clearCachedPageSelection(tabId);
+  });
+
+  chrome.tabs.onUpdated.addListener((tabId, changeInfo) => {
+    if (changeInfo.status === 'loading' || typeof changeInfo.url === 'string') {
+      clearCachedPageSelection(tabId);
+    }
+  });
+
+  chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (
       !message ||
       typeof message !== 'object' ||
@@ -1165,7 +1284,7 @@ export default defineBackground(() => {
     }
 
     if (message.type.startsWith('page-context:')) {
-      void handlePageContextMessage(message as PageContextBackgroundMessage)
+      void handlePageContextMessage(message as AnyPageContextMessage, sender)
         .then(sendResponse)
         .catch(async (error) => {
           sendResponse(await toPageContextErrorResponse(error));

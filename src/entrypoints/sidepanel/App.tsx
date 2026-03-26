@@ -200,8 +200,11 @@ const summarizeVisiblePageContextResult = (
   const headingCopy = result.mainHeading ? ` Main heading: ${result.mainHeading}.` : '';
   const blockCount = result.visibleTextBlocks.length;
   const linkCount = result.visibleLinks.length;
+  const selectionCopy = result.selection
+    ? ` Selection captured from ${result.selection.source}.`
+    : '';
 
-  return `Read the visible ${result.pageType} view with ${String(blockCount)} text ${pluralize(blockCount, 'block')} and ${String(linkCount)} visible ${pluralize(linkCount, 'link')}.${headingCopy}`;
+  return `Read the visible ${result.pageType} view with ${String(blockCount)} text ${pluralize(blockCount, 'block')} and ${String(linkCount)} visible ${pluralize(linkCount, 'link')}.${headingCopy}${selectionCopy}`;
 };
 
 const summarizeReadablePageContextResult = (
@@ -209,8 +212,11 @@ const summarizeReadablePageContextResult = (
 ) => {
   const sectionCount = result.matchedSections.length;
   const questionCopy = result.question ? ` for "${result.question}"` : '';
+  const selectionCopy = result.selection
+    ? ` Selection captured from ${result.selection.source}.`
+    : '';
 
-  return `Read ${String(sectionCount)} relevant ${pluralize(sectionCount, 'section')}${questionCopy} from the current ${result.pageType} page.`;
+  return `Read ${String(sectionCount)} relevant ${pluralize(sectionCount, 'section')}${questionCopy} from the current ${result.pageType} page.${selectionCopy}`;
 };
 
 const getFirecrawlSearchTarget = (result: FirecrawlSearchToolResult) =>

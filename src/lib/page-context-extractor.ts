@@ -16,6 +16,7 @@ export const extractPageContextFromDocument = (
   const maxVisibleImages = 4;
   const maxSectionTextChars = 700;
   const maxSummaryChars = 360;
+  const maxSelectionChars = 1_500;
   const defaultReadableSections = 3;
   const stopWords = new Set([
     'a',
@@ -74,6 +75,69 @@ export const extractPageContextFromDocument = (
     didTruncate = true;
 
     return `${normalized.slice(0, maxChars).trimEnd()}...`;
+  };
+
+  const getSelectionSnapshot = () => {
+    const toSelectionSnapshot = (
+      value: string,
+      source: 'document' | 'input' | 'textarea',
+    ) => {
+      const normalized = normalizeWhitespace(value);
+
+      if (!normalized) {
+        return null;
+      }
+
+      if (normalized.length <= maxSelectionChars) {
+        return {
+          source,
+          text: normalized,
+          truncated: false,
+        };
+      }
+
+      return {
+        source,
+        text: `${normalized.slice(0, maxSelectionChars).trimEnd()}...`,
+        truncated: true,
+      };
+    };
+
+    const activeElement = document.activeElement;
+
+    if (
+      activeElement instanceof HTMLInputElement ||
+      activeElement instanceof HTMLTextAreaElement
+    ) {
+      if (
+        activeElement instanceof HTMLInputElement &&
+        /^(hidden|password)$/i.test(activeElement.type)
+      ) {
+        return null;
+      }
+
+      const selectionStart = activeElement.selectionStart;
+      const selectionEnd = activeElement.selectionEnd;
+
+      if (
+        selectionStart != null &&
+        selectionEnd != null &&
+        selectionEnd > selectionStart
+      ) {
+        return toSelectionSnapshot(
+          activeElement.value.slice(selectionStart, selectionEnd),
+          activeElement instanceof HTMLTextAreaElement ? 'textarea' : 'input',
+        );
+      }
+    }
+
+    const selection = document.getSelection();
+
+    if (!selection || selection.isCollapsed || selection.rangeCount < 1) {
+      return null;
+    }
+
+    return toSelectionSnapshot(selection.toString(), 'document');
   };
 
   const getElementText = (element: Element) => {
@@ -635,6 +699,7 @@ export const extractPageContextFromDocument = (
   const question = normalizeWhitespace(input.question || '') || null;
   const questionTokens = question ? tokenize(question) : [];
   const maxSections = Math.min(Math.max(input.maxSections ?? defaultReadableSections, 1), 4);
+  const selection = getSelectionSnapshot();
   const scoredSections = normalizedSections.map((section) => {
     const headingLower = section.heading.toLowerCase();
     const textLower = section.text.toLowerCase();
@@ -671,6 +736,7 @@ export const extractPageContextFromDocument = (
       mainHeading,
       pageType,
       sectionHeadings: visibleSectionHeadings,
+      selection,
       title: document.title || window.location.hostname,
       truncated: didTruncate,
       url: window.location.href,
@@ -698,6 +764,7 @@ export const extractPageContextFromDocument = (
     })),
     pageType,
     question,
+    selection,
     summary,
     title: document.title || window.location.hostname,
     truncated: didTruncate,

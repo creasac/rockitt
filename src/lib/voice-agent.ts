@@ -8,7 +8,7 @@ const elevenLabsAgentTools = [
 
 export const elevenLabsVoiceDefaults = {
   agentName: 'rockitt voice',
-  configVersion: 7,
+  configVersion: 8,
   llm: 'gemini-2.0-flash',
   maxDurationSeconds: 600,
   maxTokens: -1,
@@ -25,6 +25,7 @@ export const elevenLabsVoiceDefaults = {
     'Do not claim you checked the web unless you actually used a Firecrawl tool in this turn.',
     'If a Firecrawl tool fails, say live web lookup is unavailable right now and answer cautiously.',
     'The user may ask questions unrelated to the current page. Do not inspect the page unless the request is clearly about the current page, screen, tab, what they are looking at, or an ambiguous "this", "here", "that", "above", or "below" reference.',
+    'If the user refers to highlighted text, selected text, or "what I selected", use the visible page context tool first. Its result includes the current page selection when available.',
     'When the user is asking about the current page or the referent is unclear, use the visible page context tool before answering.',
     'When the visible page context is not enough and the page is text-heavy, use the readable page context tool with a short question that captures what you need from the page.',
     'Do not claim you can see the current page unless you actually used a page context tool in this turn.',
