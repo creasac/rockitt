@@ -7,18 +7,15 @@ import type {
   PageContextBackgroundResponse,
 } from './page-context';
 import type {
-  BackgroundMessage,
-  BackgroundResponse,
-} from './provider-settings';
-import type {
-  ElevenLabsBackgroundMessage,
-  ElevenLabsBackgroundResponse,
-} from './voice-agent';
+  ServiceBackgroundMessage,
+  ServiceBackgroundResponse,
+} from './service-runtime';
+import type { ElevenLabsBackgroundMessage, ElevenLabsBackgroundResponse } from './voice-agent';
 
-export const sendProviderMessage = async (
-  message: BackgroundMessage,
-): Promise<BackgroundResponse> =>
-  chrome.runtime.sendMessage(message) as Promise<BackgroundResponse>;
+export const sendServiceMessage = async (
+  message: ServiceBackgroundMessage,
+): Promise<ServiceBackgroundResponse> =>
+  chrome.runtime.sendMessage(message) as Promise<ServiceBackgroundResponse>;
 
 export const sendVoiceMessage = async (
   message: ElevenLabsBackgroundMessage,

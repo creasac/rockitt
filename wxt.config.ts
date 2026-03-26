@@ -8,7 +8,7 @@ export default defineConfig({
     name: 'rockitt',
     content_security_policy: {
       extension_pages:
-        "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' https://api.elevenlabs.io https://api.firecrawl.dev https://livekit.rtc.elevenlabs.io https://*.livekit.rtc.elevenlabs.io wss://api.elevenlabs.io wss://livekit.rtc.elevenlabs.io wss://*.livekit.rtc.elevenlabs.io;",
+        "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* https://api.elevenlabs.io https://*.workers.dev https://livekit.rtc.elevenlabs.io https://*.livekit.rtc.elevenlabs.io wss://api.elevenlabs.io wss://livekit.rtc.elevenlabs.io wss://*.livekit.rtc.elevenlabs.io;",
     },
     description: 'Voice-first web answers from a side panel.',
     permissions: ['sidePanel', 'storage', 'scripting', 'tabs'],
@@ -16,7 +16,7 @@ export default defineConfig({
       'http://*/*',
       'https://*/*',
       'https://api.elevenlabs.io/*',
-      'https://api.firecrawl.dev/*',
+      'https://*.workers.dev/*',
       'https://livekit.rtc.elevenlabs.io/*',
       'https://*.livekit.rtc.elevenlabs.io/*',
     ],

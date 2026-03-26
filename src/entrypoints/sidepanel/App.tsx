@@ -14,7 +14,7 @@ import { VoiceSessionControls } from '../../components/VoiceSessionControls';
 import {
   sendFirecrawlMessage,
   sendPageContextMessage,
-  sendProviderMessage,
+  sendServiceMessage,
   sendVoiceMessage,
 } from '../../lib/background-client';
 import {
@@ -33,12 +33,6 @@ import {
   type VisiblePageContextToolResult,
 } from '../../lib/page-context';
 import {
-  createEmptyProviderState,
-  providerCatalog,
-  type ProviderId,
-  type ProviderStatusMap,
-} from '../../lib/provider-settings';
-import {
   createEmptyVoiceRuntimeState,
   type ElevenLabsVoiceRuntimeState,
 } from '../../lib/voice-agent';
@@ -47,6 +41,10 @@ import {
   type MicrophonePermissionResultMessage,
   type MicrophonePermissionState,
 } from '../../lib/microphone-permission';
+import {
+  createEmptyServiceState,
+  type ServiceStatusMap,
+} from '../../lib/service-runtime';
 
 type LiveChatMessage = {
   eventId?: number;
@@ -56,11 +54,6 @@ type LiveChatMessage = {
   status?: 'error' | 'running' | 'success';
   text: string;
   toolCallId?: string;
-};
-
-const emptyDraftState: Record<ProviderId, string> = {
-  elevenlabs: '',
-  firecrawl: '',
 };
 
 const elevenLabsWorkletPaths = {
@@ -635,20 +628,19 @@ export function App() {
   const [debugActivities, setDebugActivities] = useState<DebugActivity[]>(
     () => readStoredDebugActivities(),
   );
-  const [drafts, setDrafts] = useState<Record<ProviderId, string>>(emptyDraftState);
   const [isAwaitingReply, setIsAwaitingReply] = useState(false);
   const [isMicMuted, setIsMicMuted] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isStartingVoice, setIsStartingVoice] = useState(false);
+  const [isRefreshingServices, setIsRefreshingServices] = useState(false);
   const [messages, setMessages] = useState<LiveChatMessage[]>([]);
   const [microphoneState, setMicrophoneState] =
     useState<MicrophonePermissionState>('unknown');
   const [panelMode, setPanelMode] = useState<PanelMode>('voice');
-  const [pendingAction, setPendingAction] = useState<string | null>(null);
-  const [providerState, setProviderState] =
-    useState<ProviderStatusMap>(createEmptyProviderState());
   const [requestError, setRequestError] = useState<string | null>(null);
   const [requestNotice, setRequestNotice] = useState<string | null>(null);
+  const [serviceState, setServiceState] =
+    useState<ServiceStatusMap>(createEmptyServiceState());
   const [voiceRuntime, setVoiceRuntime] = useState<ElevenLabsVoiceRuntimeState>(
     createEmptyVoiceRuntimeState(),
   );
@@ -1168,58 +1160,53 @@ export function App() {
     workletPaths: elevenLabsWorkletPaths,
   });
 
-  const applyResponse = (nextState: ProviderStatusMap) => {
-    setProviderState(nextState);
+  const applyServiceResponse = (
+    nextState: ServiceStatusMap,
+    nextVoiceRuntime: ElevenLabsVoiceRuntimeState,
+  ) => {
+    setServiceState(nextState);
+    setVoiceRuntime(nextVoiceRuntime);
   };
 
-  const loadProviderState = async (preserveMessages = false) => {
+  const loadServiceState = async (
+    preserveMessages = false,
+  ): Promise<ServiceStatusMap | null> => {
     if (!preserveMessages) {
       setRequestError(null);
       setRequestNotice(null);
     }
 
+    setIsRefreshingServices(true);
+
     try {
-      const response = await sendProviderMessage({
-        type: 'provider-settings:get-state',
+      const response = await sendServiceMessage({
+        type: 'service-status:get-state',
       });
 
       if (!response.ok) {
-        if (response.state) {
-          applyResponse(response.state);
+        if (response.state && response.voiceRuntime) {
+          applyServiceResponse(response.state, response.voiceRuntime);
+        } else if (response.state) {
+          setServiceState(response.state);
+        } else if (response.voiceRuntime) {
+          setVoiceRuntime(response.voiceRuntime);
         }
 
         setRequestError(response.error);
-        return;
+        return response.state ?? null;
       }
 
-      applyResponse(response.state);
+      applyServiceResponse(response.state, response.voiceRuntime);
+      return response.state;
     } catch (error) {
       setRequestError(
         error instanceof Error
           ? error.message
-          : 'Unable to load provider state.',
+          : 'Unable to load managed service state.',
       );
-    }
-  };
-
-  const loadVoiceRuntime = async () => {
-    try {
-      const response = await sendVoiceMessage({
-        type: 'elevenlabs:get-runtime-state',
-      });
-
-      if (!response.ok) {
-        setRequestError(response.error);
-        return;
-      }
-
-      setVoiceRuntime(response.runtime);
-    } catch (error) {
-      setRequestError(
-        error instanceof Error
-          ? error.message
-          : 'Unable to load ElevenLabs voice state.',
-      );
+      return null;
+    } finally {
+      setIsRefreshingServices(false);
     }
   };
 
@@ -1314,139 +1301,6 @@ export function App() {
     }
   };
 
-  const handleDraftChange = (provider: ProviderId, value: string) => {
-    setDrafts((currentDrafts) => ({
-      ...currentDrafts,
-      [provider]: value,
-    }));
-  };
-
-  const handleBackgroundAction = async (
-    action: string,
-    runner: () => Promise<void>,
-  ) => {
-    setPendingAction(action);
-    setRequestError(null);
-    setRequestNotice(null);
-
-    try {
-      await runner();
-    } catch (error) {
-      setRequestError(
-        error instanceof Error
-          ? error.message
-          : 'Unexpected extension request failed.',
-      );
-    } finally {
-      setPendingAction(null);
-    }
-  };
-
-  const handleSaveProviderKey = async (provider: ProviderId) => {
-    const apiKey = drafts[provider].trim();
-
-    if (!apiKey) {
-      setRequestError(`${providerCatalog[provider].label} key cannot be empty.`);
-      return;
-    }
-
-    await handleBackgroundAction(`save:${provider}`, async () => {
-      const response = await sendProviderMessage({
-        type: 'provider-settings:save-key',
-        provider,
-        apiKey,
-      });
-
-      if (!response.ok) {
-        if (response.state) {
-          applyResponse(response.state);
-        }
-
-        throw new Error(response.error);
-      }
-
-      if (provider === 'elevenlabs') {
-        setVoiceRuntime(createEmptyVoiceRuntimeState());
-      }
-
-      applyResponse(response.state);
-      setDrafts((currentDrafts) => ({
-        ...currentDrafts,
-        [provider]: '',
-      }));
-      setRequestNotice(`${providerCatalog[provider].label} key saved locally.`);
-    });
-  };
-
-  const handleDeleteProviderKey = async (provider: ProviderId) => {
-    await handleBackgroundAction(`delete:${provider}`, async () => {
-      const response = await sendProviderMessage({
-        type: 'provider-settings:delete-key',
-        provider,
-      });
-
-      if (!response.ok) {
-        if (response.state) {
-          applyResponse(response.state);
-        }
-
-        throw new Error(response.error);
-      }
-
-      if (provider === 'elevenlabs') {
-        if (conversation.status !== 'disconnected') {
-          await conversation.endSession();
-        }
-
-        setMessages([]);
-        setIsAwaitingReply(false);
-        setVoiceRuntime(createEmptyVoiceRuntimeState());
-      }
-
-      applyResponse(response.state);
-      setDrafts((currentDrafts) => ({
-        ...currentDrafts,
-        [provider]: '',
-      }));
-      setRequestNotice(
-        `${providerCatalog[provider].label} key removed from local storage.`,
-      );
-    });
-  };
-
-  const handleTestProviderKey = async (provider: ProviderId) => {
-    await handleBackgroundAction(`test:${provider}`, async () => {
-      const response = await sendProviderMessage({
-        type: 'provider-settings:test-key',
-        provider,
-      });
-
-      if (!response.ok) {
-        if (response.state) {
-          applyResponse(response.state);
-        }
-
-        throw new Error(response.error);
-      }
-
-      applyResponse(response.state);
-
-      const nextStatus = response.state[provider];
-
-      if (nextStatus.validationStatus === 'success') {
-        setRequestNotice(
-          `${providerCatalog[provider].label} key passed the latest check.`,
-        );
-        return;
-      }
-
-      setRequestError(
-        nextStatus.validationMessage ??
-          `${providerCatalog[provider].label} key check failed.`,
-      );
-    });
-  };
-
   const startVoiceSession = async () => {
     setIsStartingVoice(true);
     setRequestError(null);
@@ -1497,14 +1351,54 @@ export function App() {
   const handleLiveToggle = async () => {
     if (
       isStartingVoice ||
+      isRefreshingServices ||
       conversation.status === 'connecting' ||
       conversation.status === 'disconnecting'
     ) {
       return;
     }
 
-    if (!providerState.elevenlabs.hasKey) {
-      setRequestError('Add your ElevenLabs key in Settings before starting voice.');
+    let nextServiceState = serviceState;
+
+    if (
+      serviceState.backend.status === 'checking' ||
+      serviceState.elevenlabs.status === 'checking'
+    ) {
+      const refreshedServiceState = await loadServiceState(true);
+
+      if (!refreshedServiceState) {
+        setPanelMode('voice');
+        return;
+      }
+
+      nextServiceState = refreshedServiceState;
+    } else if (
+      serviceState.backend.status !== 'ready' ||
+      serviceState.elevenlabs.status !== 'ready'
+    ) {
+      const refreshedServiceState = await loadServiceState(true);
+
+      if (refreshedServiceState) {
+        nextServiceState = refreshedServiceState;
+      }
+    }
+
+    if (
+      nextServiceState.backend.status !== 'ready' ||
+      nextServiceState.elevenlabs.status !== 'ready'
+    ) {
+      const nextServiceError =
+        nextServiceState.backend.status !== 'ready'
+          ? (nextServiceState.backend.detail ??
+              nextServiceState.backend.summary ??
+              'The Rockitt backend is unavailable right now.')
+          : (nextServiceState.elevenlabs.detail ??
+              nextServiceState.elevenlabs.summary ??
+              'Managed ElevenLabs voice is unavailable right now.');
+
+      setRequestError(
+        nextServiceError,
+      );
       setPanelMode('voice');
       return;
     }
@@ -1572,8 +1466,7 @@ export function App() {
   };
 
   useEffect(() => {
-    void loadProviderState();
-    void loadVoiceRuntime();
+    void loadServiceState();
     void refreshMicrophonePermissionState();
   }, []);
 
@@ -1622,19 +1515,21 @@ export function App() {
       return;
     }
 
-    void loadProviderState(true);
+    void loadServiceState(true);
   }, [isSettingsOpen]);
 
   useEffect(() => {
-    if (providerState.elevenlabs.hasKey) {
+    if (serviceState.backend.status === 'ready' && serviceState.elevenlabs.status === 'ready') {
       return;
     }
 
     setIsMicMuted(false);
-    setVoiceRuntime(createEmptyVoiceRuntimeState());
     setIsAwaitingReply(false);
-    setMessages([]);
-  }, [providerState.elevenlabs.hasKey]);
+    if (conversation.status === 'disconnected') {
+      setVoiceRuntime(createEmptyVoiceRuntimeState());
+      setMessages([]);
+    }
+  }, [conversation.status, serviceState.backend.status, serviceState.elevenlabs.status]);
 
   useEffect(() => {
     const handleRuntimeMessage = (message: unknown) => {
@@ -1677,14 +1572,22 @@ export function App() {
   const activeToolMessage = [...messages]
     .reverse()
     .find((message) => message.role === 'tool' && message.status === 'running');
-  const hasVoiceKey = providerState.elevenlabs.hasKey;
   const isVoiceSessionLive = conversation.status === 'connected';
+  const isManagedVoiceReady =
+    serviceState.backend.status === 'ready' &&
+    serviceState.elevenlabs.status === 'ready';
+  const isManagedLiveWebReady =
+    serviceState.backend.status === 'ready' &&
+    serviceState.firecrawl.status === 'ready';
   const isVoiceControlPending =
+    isRefreshingServices ||
     isStartingVoice ||
     conversation.status === 'connecting' ||
     conversation.status === 'disconnecting';
   const liveControlLabel =
-    isStartingVoice || conversation.status === 'connecting'
+    isRefreshingServices
+      ? 'Checking'
+      : isStartingVoice || conversation.status === 'connecting'
       ? 'Starting'
       : conversation.status === 'disconnecting'
         ? 'Ending'
@@ -1693,19 +1596,29 @@ export function App() {
           : 'Go live';
   const voiceHint =
     activeToolMessage?.text ??
-    (isStartingVoice || conversation.status === 'connecting'
-      ? 'starting'
+    (isRefreshingServices
+      ? 'checking'
+      : isStartingVoice || conversation.status === 'connecting'
+        ? 'starting'
       : stateCopy.hint);
   const voiceMeta = voiceRuntime.agent
     ? `${voiceRuntime.agent.llm} / ${voiceRuntime.agent.voiceLabel} / aggressive cost profile`
-    : 'Automatic agent provisioning on first connect.';
+    : isManagedVoiceReady
+      ? 'Managed by the Rockitt backend.'
+      : serviceState.elevenlabs.detail ?? serviceState.elevenlabs.summary;
+  const backendMeta =
+    serviceState.backend.detail ?? serviceState.backend.summary;
   const microphoneMeta = `Mic permission: ${microphoneState}`;
-  const liveWebMeta = providerState.firecrawl.hasKey
-    ? 'Live web lookup ready via Firecrawl.'
-    : 'Add a Firecrawl key to enable live web lookup.';
+  const liveWebMeta = isManagedLiveWebReady
+    ? 'Live web lookup ready via the Rockitt backend.'
+    : serviceState.firecrawl.detail ?? serviceState.firecrawl.summary;
   const pageContextMeta =
     'Current-tab context is read locally only when the question is about the page.';
   const settingsDetails = [
+    {
+      label: 'Backend',
+      value: backendMeta,
+    },
     {
       label: 'Voice agent',
       value: voiceMeta,
@@ -1788,7 +1701,7 @@ export function App() {
                     </div>
                   ) : null}
 
-                  {hasVoiceKey && microphoneState !== 'granted' ? (
+                  {isManagedVoiceReady && microphoneState !== 'granted' ? (
                     <div className="voice-view__actions">
                       <button
                         className="action-button action-button--ghost"
@@ -1857,16 +1770,10 @@ export function App() {
                 />
               }
               details={settingsDetails}
-              drafts={drafts}
-              pendingAction={pendingAction}
-              providerState={providerState}
               requestError={requestError}
               requestNotice={requestNotice}
-              onChangeDraft={handleDraftChange}
               onClose={() => setIsSettingsOpen(false)}
-              onDeleteProviderKey={handleDeleteProviderKey}
-              onSaveProviderKey={handleSaveProviderKey}
-              onTestProviderKey={handleTestProviderKey}
+              serviceState={serviceState}
             />
           </>
         ) : null}

@@ -55,10 +55,6 @@ export const elevenLabsVoiceDefaults = {
   tools: elevenLabsAgentTools,
 } as const;
 
-export const voiceStorageKeys = {
-  agent: 'elevenlabsVoiceAgent',
-} as const;
-
 export type StoredElevenLabsVoiceAgent = {
   agentId: string;
   agentName: string;
