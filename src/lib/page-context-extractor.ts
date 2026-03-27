@@ -303,6 +303,8 @@ export const extractPageContextFromDocument = (
       element instanceof HTMLSelectElement
         ? element
         : null;
+    // Do not read entered form values into page context. Limit control summaries
+    // to labels and other non-user-authored metadata.
     const labelCandidate =
       element.getAttribute('aria-label') ||
       element.getAttribute('title') ||
@@ -310,7 +312,6 @@ export const extractPageContextFromDocument = (
       (element instanceof HTMLButtonElement ? getElementText(element) : '') ||
       (element instanceof HTMLLabelElement ? getElementText(element) : '') ||
       field?.placeholder ||
-      field?.value ||
       element.getAttribute('name') ||
       element.id;
 

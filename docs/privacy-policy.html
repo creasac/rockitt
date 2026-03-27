@@ -1,0 +1,210 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Rockitt Privacy Policy</title>
+    <style>
+      :root {
+        color-scheme: light;
+        --bg: #f5f3ed;
+        --card: #fffdf8;
+        --text: #1f1a14;
+        --muted: #5b5147;
+        --border: #d9cfc0;
+        --accent: #8f4426;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background:
+          radial-gradient(circle at top, rgba(143, 68, 38, 0.08), transparent 45%),
+          var(--bg);
+        color: var(--text);
+        font:
+          16px/1.65 "IBM Plex Sans", "Segoe UI", sans-serif;
+      }
+
+      main {
+        max-width: 840px;
+        margin: 0 auto;
+        padding: 48px 20px 80px;
+      }
+
+      .card {
+        background: var(--card);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        box-shadow: 0 18px 60px rgba(31, 26, 20, 0.08);
+        padding: 32px;
+      }
+
+      h1,
+      h2 {
+        font-family: "Space Grotesk", "Segoe UI", sans-serif;
+        line-height: 1.15;
+        margin: 0 0 16px;
+      }
+
+      h1 {
+        font-size: clamp(2rem, 4vw, 3rem);
+        margin-bottom: 12px;
+      }
+
+      h2 {
+        font-size: 1.25rem;
+        margin-top: 32px;
+      }
+
+      p,
+      li {
+        color: var(--text);
+        margin: 0 0 14px;
+      }
+
+      .lede,
+      .muted {
+        color: var(--muted);
+      }
+
+      ul {
+        margin: 0 0 14px 20px;
+        padding: 0;
+      }
+
+      a {
+        color: var(--accent);
+      }
+
+      code {
+        background: rgba(143, 68, 38, 0.08);
+        border-radius: 6px;
+        padding: 0.1rem 0.35rem;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <article class="card">
+        <h1>Rockitt Privacy Policy</h1>
+        <p class="lede">Last updated: March 27, 2026</p>
+        <p>
+          Rockitt is a Chrome extension that provides a voice-first browser side
+          panel for asking questions about the current web page or the live web.
+          This policy explains what data Rockitt handles, how that data is used,
+          and where it is sent.
+        </p>
+
+        <h2>What Rockitt collects</h2>
+        <p>Rockitt may collect and process the following categories of data:</p>
+        <ul>
+          <li>
+            Voice and chat interactions, including microphone audio, typed
+            messages, transcripts, assistant responses, and short carry-over
+            context from recent prior Rockitt sessions.
+          </li>
+          <li>
+            Current page context when you use page-aware features, including the
+            current page URL, page title, selected text, visible text, links,
+            tables, images, and non-sensitive labels or metadata for visible
+            controls on the page.
+          </li>
+          <li>
+            Live web lookup inputs, including search queries and public URLs
+            that you ask Rockitt to search or fetch.
+          </li>
+          <li>
+            Local extension state stored in your browser, including a local
+            install identifier, trial usage timestamps, recent conversation
+            carry-over, and a local debug activity timeline.
+          </li>
+        </ul>
+
+        <h2>How Rockitt uses data</h2>
+        <p>Rockitt uses data only to provide its core functionality, including:</p>
+        <ul>
+          <li>running live voice conversations and chat responses;</li>
+          <li>answering questions about the current page;</li>
+          <li>performing live web search and page fetch requests;</li>
+          <li>preserving short session continuity between recent conversations;</li>
+          <li>applying local trial limits and backend rate limiting.</li>
+        </ul>
+        <p>
+          Rockitt does not sell personal data. Rockitt does not use or transfer
+          user data for advertising, creditworthiness, lending decisions, or
+          purposes unrelated to the extension's single purpose.
+        </p>
+
+        <h2>Third-party services</h2>
+        <p>
+          Rockitt uses service providers that process data only as needed to
+          deliver the extension's features:
+        </p>
+        <ul>
+          <li>
+            ElevenLabs and its real-time voice infrastructure for live voice
+            sessions, audio streaming, transcripts, and assistant responses.
+          </li>
+          <li>
+            A Rockitt backend running on Cloudflare Workers for managed voice
+            session setup, backend rate limiting, and proxying live web lookup
+            requests.
+          </li>
+          <li>
+            Firecrawl for live search and public web page scraping when you ask
+            Rockitt to search the web or inspect a public URL.
+          </li>
+        </ul>
+
+        <h2>Local storage and retention</h2>
+        <p>
+          Some data is stored locally in your browser to make the extension work
+          correctly. This includes a local install identifier, trial usage
+          state, a recent conversation carry-over summary, and a local debug
+          activity history.
+        </p>
+        <p>
+          Firecrawl search and scrape requests sent through the Rockitt backend
+          may be cached briefly at the edge to improve responsiveness. Rockitt's
+          current backend code caches those responses for about 45 to 60
+          seconds.
+        </p>
+        <p>
+          Third-party processors may retain data according to their own privacy
+          policies and service terms.
+        </p>
+
+        <h2>Your choices</h2>
+        <ul>
+          <li>
+            You can stop microphone access at any time through Chrome's
+            permission controls.
+          </li>
+          <li>
+            You can avoid page-aware processing by not asking Rockitt about the
+            current page or selected text.
+          </li>
+          <li>
+            You can remove locally stored extension data by clearing the
+            extension's storage or uninstalling the extension.
+          </li>
+        </ul>
+
+        <h2>Changes to this policy</h2>
+        <p>
+          If Rockitt's data practices change, this policy should be updated
+          before those changes are released.
+        </p>
+
+        <h2>Contact</h2>
+        <p>
+          timsinadipesh77@gmail.com
+        </p>
+      </article>
+    </main>
+  </body>
+</html>
