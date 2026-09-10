@@ -2,6 +2,8 @@
 
 Rockitt is a voice-first Chrome side panel extension for grounded web answers. The extension UI is built with WXT + React, uses ElevenLabs for live voice, and talks to a small Cloudflare Worker that proxies Firecrawl and keeps API keys out of the browser.
 
+<img width="1920" height="1080" alt="cover" src="https://github.com/user-attachments/assets/d7d82912-6eea-4559-8b71-24d37938c886" />
+
 ## Quick Start
 
 ```bash
