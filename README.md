@@ -1,8 +1,14 @@
-# Rockitt
+<h3 align="center">rockitt</h3>
+<p align="center">
+  <img src="https://github.com/user-attachments/assets/d7d82912-6eea-4559-8b71-24d37938c886" alt="" width="250" align="middle">
+</p>
+<p align="center">"@rock is this true?" for the web</p>
+
+---
 
 Rockitt is a voice-first Chrome side panel extension for grounded web answers. The extension UI is built with WXT + React, uses ElevenLabs for live voice, and talks to a small Cloudflare Worker that proxies Firecrawl and keeps API keys out of the browser.
 
-<img width="1920" height="1080" alt="cover" src="https://github.com/user-attachments/assets/d7d82912-6eea-4559-8b71-24d37938c886" />
+From "@grok is this true?", and since grok == rock/silicon, thus: ROCK Is This True => ROCKITT. It references how the phrase is used on X, to apply to the broader web, similar to "google it" but instead of asking google, we ask the rock.
 
 ## Quick Start
 
